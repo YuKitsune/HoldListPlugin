@@ -6,6 +6,7 @@
              xmlns:local="clr-namespace:HoldPlugin"
              xmlns:controls="clr-namespace:HoldPlugin.Controls"
              mc:Ignorable="d" 
+             Width="16"
              Loaded="UserControl_Loaded">
     
     <!-- Single beveled border containing all scrollbar elements -->

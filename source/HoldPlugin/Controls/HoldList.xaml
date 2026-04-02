@@ -9,7 +9,9 @@
              Background="{x:Static local:Theme.BackgroundColor}"
              d:DataContext="{d:DesignInstance Type=viewModels:HoldListViewModel}"
              mc:Ignorable="d"
-             d:DesignHeight="150" d:DesignWidth="480">
+             d:DesignHeight="150" d:DesignWidth="480"
+             HorizontalAlignment="Stretch"
+             VerticalAlignment="Stretch">
     <UserControl.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
@@ -20,14 +22,29 @@
     
     <ScrollViewer Style="{StaticResource CustomScrollViewerStyle}">
         <ItemsControl ItemsSource="{Binding Items}">
+            <ItemsControl.ItemContainerStyle>
+                <Style>
+                    <Setter Property="FrameworkElement.Margin" Value="{x:Static local:Theme.BeveledBorderThickness}"/>
+                </Style>
+            </ItemsControl.ItemContainerStyle>
             <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                
+
                     <Border
-                        BorderBrush="{Binding State, Converter={StaticResource HoldItemStateToColorConverter}}"
                         Background="{x:Static local:Theme.ItemBackgroundColor}"
-                        BorderThickness="2">
-                        
+                        BorderThickness="2"
+                        HorizontalAlignment="Left">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="BorderBrush" Value="{x:Static local:Theme.StripTextColor}"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsDesignated}" Value="True">
+                                        <Setter Property="BorderBrush" Value="{Binding State, Converter={StaticResource HoldItemStateToColorConverter}}"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
@@ -115,7 +132,7 @@
 
                             <Border Grid.Column="2" Margin="4">
                                 <!-- Global ops -->
-                                <Grid>
+                                <Grid MinWidth="120">
                                     <!-- Display mode -->
                                     <TextBlock Text="{Binding DisplayGlobalOps}"
                                                Foreground="{x:Static local:Theme.StripTextColor}"
@@ -136,8 +153,8 @@
 
                                     <!-- Edit mode -->
                                     <TextBox Text="{Binding GlobalOpsEditValue, UpdateSourceTrigger=PropertyChanged}"
-                                             Foreground="{x:Static local:Theme.InteractiveTextColor}"
                                              MaxLength="15"
+                                             HorizontalAlignment="Stretch"
                                              LostFocus="GlobalOpsTextBox_LostFocus"
                                              IsVisibleChanged="GlobalOpsTextBox_IsVisibleChanged">
                                         <TextBox.InputBindings>
@@ -145,7 +162,7 @@
                                             <KeyBinding Key="Escape" Command="{Binding CancelGlobalOpsEditCommand}"/>
                                         </TextBox.InputBindings>
                                         <TextBox.Style>
-                                            <Style TargetType="TextBox">
+                                            <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
                                                 <Setter Property="Visibility" Value="Collapsed"/>
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding IsEditingGlobalOps}" Value="True">

@@ -12,6 +12,8 @@ public class WindowManager(GuiInvoker guiInvoker)
         string title,
         Func<IWindowHandle, UIElement> createView,
         bool shrinkToContent = true,
+        bool canClose = true,
+        bool canMinimise = false,
         Size? size = null,
         Action<VatSysForm>? configureForm = null)
     {
@@ -23,7 +25,7 @@ public class WindowManager(GuiInvoker guiInvoker)
                 return;
             }
 
-            var form = new VatSysForm(title, createView, shrinkToContent)
+            var form = new VatSysForm(title, createView, shrinkToContent, canClose, canMinimise)
             {
                 StartPosition = FormStartPosition.CenterParent
             };
@@ -54,6 +56,17 @@ public class WindowManager(GuiInvoker guiInvoker)
 
         windowHandle = null;
         return false;
+    }
+
+    public void CloseWindow(string key)
+    {
+        guiInvoker.InvokeOnUiThread(mainForm =>
+        {
+            if (_windows.TryGetValue(key, out var form))
+            {
+                form.ForceClose();
+            }
+        });
     }
 
     void RemoveWindow(string key)

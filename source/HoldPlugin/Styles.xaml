@@ -100,7 +100,7 @@
 
     <!-- TextBox -->
     <Style TargetType="TextBox">
-        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Background" Value="{x:Static local:Theme.BackgroundColor}"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Padding" Value="0"/>
         <Setter Property="Margin" Value="0"/>
@@ -111,11 +111,12 @@
         <Setter Property="FontFamily" Value="{x:Static local:Theme.FontFamily}"/>
         <Setter Property="FontSize" Value="{x:Static local:Theme.FontSize}"/>
         <Setter Property="FontWeight" Value="{x:Static local:Theme.FontWeight}"/>
+        <Setter Property="CharacterCasing" Value="Upper"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TextBox">
                     <controls:BeveledBorder BorderThickness="{x:Static local:Theme.BeveledBorderThickness}" BevelType="Sunken">
-                        <ScrollViewer x:Name="PART_ContentHost" />
+                        <ScrollViewer x:Name="PART_ContentHost" Background="{TemplateBinding Background}" />
                     </controls:BeveledBorder>
                 </ControlTemplate>
             </Setter.Value>

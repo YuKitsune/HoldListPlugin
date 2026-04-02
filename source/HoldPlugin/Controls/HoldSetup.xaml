@@ -50,8 +50,9 @@
 
             <!-- Edit mode -->
             <TextBox Text="{Binding EditValue, UpdateSourceTrigger=PropertyChanged}"
-                     Foreground="{x:Static local:Theme.InteractiveTextColor}"
                      MaxLength="11"
+                     Width="104"
+                     Height="24"
                      LostFocus="HoldPointTextBox_LostFocus"
                      IsVisibleChanged="HoldPointTextBox_IsVisibleChanged">
                 <TextBox.InputBindings>
@@ -59,7 +60,7 @@
                     <KeyBinding Key="Escape" Command="{Binding CancelEditCommand}"/>
                 </TextBox.InputBindings>
                 <TextBox.Style>
-                    <Style TargetType="TextBox">
+                    <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
                         <Setter Property="Visibility" Value="Collapsed"/>
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsEditing}" Value="True">
@@ -90,8 +91,9 @@
 
             <!-- Edit mode -->
             <TextBox Text="{Binding EditValue, UpdateSourceTrigger=PropertyChanged}"
-                     Foreground="{x:Static local:Theme.InteractiveTextColor}"
                      MaxLength="11"
+                     Width="104"
+                     Height="24"
                      LostFocus="HoldPointTextBox_LostFocus"
                      IsVisibleChanged="HoldPointTextBox_IsVisibleChanged">
                 <TextBox.InputBindings>
@@ -99,7 +101,7 @@
                     <KeyBinding Key="Escape" Command="{Binding CancelEditCommand}"/>
                 </TextBox.InputBindings>
                 <TextBox.Style>
-                    <Style TargetType="TextBox">
+                    <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
                         <Setter Property="Visibility" Value="Collapsed"/>
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsEditing}" Value="True">
@@ -130,8 +132,9 @@
 
             <!-- Edit mode -->
             <TextBox Text="{Binding EditValue, UpdateSourceTrigger=PropertyChanged}"
-                     Foreground="{x:Static local:Theme.InteractiveTextColor}"
                      MaxLength="11"
+                     Width="104"
+                     Height="24"
                      LostFocus="HoldPointTextBox_LostFocus"
                      IsVisibleChanged="HoldPointTextBox_IsVisibleChanged">
                 <TextBox.InputBindings>
@@ -139,7 +142,7 @@
                     <KeyBinding Key="Escape" Command="{Binding CancelEditCommand}"/>
                 </TextBox.InputBindings>
                 <TextBox.Style>
-                    <Style TargetType="TextBox">
+                    <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
                         <Setter Property="Visibility" Value="Collapsed"/>
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsEditing}" Value="True">
@@ -170,8 +173,9 @@
 
             <!-- Edit mode -->
             <TextBox Text="{Binding EditValue, UpdateSourceTrigger=PropertyChanged}"
-                     Foreground="{x:Static local:Theme.InteractiveTextColor}"
                      MaxLength="11"
+                     Width="104"
+                     Height="24"
                      LostFocus="HoldPointTextBox_LostFocus"
                      IsVisibleChanged="HoldPointTextBox_IsVisibleChanged">
                 <TextBox.InputBindings>
@@ -179,7 +183,7 @@
                     <KeyBinding Key="Escape" Command="{Binding CancelEditCommand}"/>
                 </TextBox.InputBindings>
                 <TextBox.Style>
-                    <Style TargetType="TextBox">
+                    <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
                         <Setter Property="Visibility" Value="Collapsed"/>
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsEditing}" Value="True">

@@ -1,6 +1,7 @@
 ﻿using System.Windows;
 using System.Windows.Forms;
 using System.Windows.Forms.Integration;
+using System.Windows.Forms.VisualStyles;
 using vatsys;
 
 namespace HoldPlugin;
@@ -19,7 +20,7 @@ public class VatSysForm : BaseForm
         Close();
     }
 
-    public VatSysForm(string title, Func<IWindowHandle, UIElement> childFactory, bool shrinkToContent)
+    public VatSysForm(string title, Func<IWindowHandle, UIElement> childFactory, bool shrinkToContent, bool canClose, bool canMinimise)
     {
         MiddleClickClose = false; // This is on by default. Why...
 
@@ -54,6 +55,18 @@ public class VatSysForm : BaseForm
         if (!shrinkToContent)
         {
             elementHost.Dock = DockStyle.Fill;
+        }
+
+        if (!canClose)
+        {
+            HasCloseButton = false;
+            HideOnClose = true;
+        }
+
+        if (!canMinimise)
+        {
+            MinimizeBox = false;
+            HasMinimizeButton = false;
         }
 
         Controls.Add(elementHost);
