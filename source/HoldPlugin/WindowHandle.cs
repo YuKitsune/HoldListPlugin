@@ -12,6 +12,7 @@ public class WindowHandle(VatSysForm form) : IWindowHandle
 {
     public void Focus()
     {
+        form.Show();
         form.WindowState = FormWindowState.Normal;
         form.Activate();
     }

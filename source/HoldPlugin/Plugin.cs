@@ -595,13 +595,13 @@ public class Plugin
             ? new ClearedFlightLevel(fdr.CFLUpper)
             : new ClearedBlockLevel(fdr.CFLLower, fdr.CFLUpper);
 
-        var state = HoldItemState.Unconcerned;
-
-        if (fdr.IsTrackedByMe)
-            state = HoldItemState.Jurisdiction;
-
-        if (fdr.IsHandoff || fdr.HandoffController is not null)
+        HoldItemState state;
+        if (fdr.IsHandoff || (fdr.IsTrackedByMe && fdr.HandoffController is not null))
             state = HoldItemState.Handover;
+        else if (fdr.IsTrackedByMe)
+            state = HoldItemState.Jurisdiction;
+        else
+            state = HoldItemState.Unconcerned;
 
         var holdItem = new HoldItem(
             fdr,
@@ -848,6 +848,11 @@ public class Plugin
             WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
             EnsureHoldWindowsAreOpen();
         }
+    }
+
+    public void Receive(RefreshHoldsCommand message)
+    {
+        EnsureHoldWindowsAreOpen();
     }
 }
 

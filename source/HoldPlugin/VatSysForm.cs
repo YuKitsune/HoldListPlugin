@@ -17,6 +17,7 @@ public class VatSysForm : BaseForm
     public void ForceClose()
     {
         ForceClosing = true;
+        HideOnClose = false;
         Close();
     }
 
@@ -60,7 +61,6 @@ public class VatSysForm : BaseForm
         if (!canClose)
         {
             HasCloseButton = false;
-            HideOnClose = true;
         }
 
         if (!canMinimise)
@@ -86,5 +86,10 @@ public class VatSysForm : BaseForm
         }
 
         base.OnFormClosing(e);
+
+        if (ForceClosing)
+        {
+            e.Cancel = false;
+        }
     }
 }
