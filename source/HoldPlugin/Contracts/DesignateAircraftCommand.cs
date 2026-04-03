@@ -60,7 +60,9 @@ public class HoldItem : IDisposable
             switch (e.PropertyName)
             {
                 case nameof(FDR.ParsedRoute):
-                    if (!FDR.ParsedRoute.Contains(HoldEntryPoint) || !FDR.ParsedRoute.Contains(HoldExitPoint))
+                    // Scenario 2: Check if entry or exit points no longer exist after overflown index
+                    var routeAfterOverflown = FDR.ParsedRoute.Skip(FDR.ParsedRoute.OverflownIndex).ToList();
+                    if (!routeAfterOverflown.Contains(HoldEntryPoint) || !routeAfterOverflown.Contains(HoldExitPoint))
                     {
                         WeakReferenceMessenger.Default.Send(new RemoveHoldItemCommand(Callsign));
                     }
@@ -142,10 +144,6 @@ public class HoldItem : IDisposable
     {
         FDR.PropertyChanged -= OnFDRPropertyChanged;
         HoldExitPoint.PropertyChanged -= OnHoldExitPointPropertyChanged;
-
-        // Remove hold exit segment from route
-        if (FDR.ParsedRoute.Contains(HoldExitPoint))
-            FDR.ParsedRoute.Remove(HoldExitPoint);
     }
 }
 

@@ -1,5 +1,4 @@
-﻿using System.Collections.Concurrent;
-using System.ComponentModel.Composition;
+﻿using System.ComponentModel.Composition;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Forms;
@@ -13,9 +12,6 @@ using Track = vatsys.Track;
 
 namespace HoldPlugin;
 
-// BUG: Infinite loop updating hold item (Updating ETOs and route -> FDR Updated, Update hold -> Update ETO, etc.)
-// BUG: Repeated "Collection was modified, enumeration may not execute"
-// BUG: Hold exit point isn't synchronised
 // BUG: Changing the hold exit time causes the entry time to be off, maybe need a custom time selector?
 // BUG: Aircraft remain in hold window after handoff. Need to remove them completely after handoff
 // BUG: Hold waypoint sometimes disappears when FDR updates
@@ -30,17 +26,6 @@ namespace HoldPlugin;
 // TODO: Don't remove the hold segments when dropping the tag or handing off
 // TODO: Smaller label when in the hold
 // TODO: Clean up
-
-public class FdrSemaphoreProvider
-{
-    readonly ConcurrentDictionary<string, SemaphoreSlim> _semaphores = new();
-
-    public SemaphoreSlim Get(string callsign)
-    {
-        return _semaphores.GetOrAdd(callsign, _ => new SemaphoreSlim(1, 1));
-    }
-}
-
 
 [Export(typeof(IPlugin))]
 public class Plugin
@@ -79,7 +64,7 @@ public class Plugin
     readonly Dictionary<string, FDP2.FDR> _subscribedFDRs = new();
 
     public static IReadOnlyCollection<string> HoldLists => _holdLists;
-    public static IReadOnlyCollection<HoldItem> ActiveHolds => _activeHolds.AsReadOnly();
+    public static IReadOnlyCollection<HoldItem> ActiveHolds => _activeHolds.ToArray();
 
     readonly WindowManager _windowManager;
 
@@ -223,6 +208,9 @@ public class Plugin
                 route = flightDataRecord.ParsedRoute.Where(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT).ToArray();
             }
 
+            if (index >= route.Length)
+                return null;
+            
             var point = route[index];
 
             if (holdInfo.HoldEntryPoint == point)
@@ -334,7 +322,7 @@ public class Plugin
             try
             {
                 var selectedCallsign = MMI.SelectedTrack?.GetFDR()?.Callsign;
-                foreach (var hold in _activeHolds)
+                foreach (var hold in _activeHolds.ToArray())
                 {
                     hold.IsDesignated = hold.Callsign == selectedCallsign;
                 }
@@ -365,16 +353,16 @@ public class Plugin
 
     void SubscribeToAllFDRs()
     {
-        // Unsubscribe from all previous FDRs
-        foreach (var fdr in _subscribedFDRs.Values)
+        // Unsubscribe from all previous FDRs (snapshot to avoid enumeration issues)
+        foreach (var fdr in _subscribedFDRs.Values.ToArray())
         {
             fdr.PropertyChanged -= OnFDRPropertyChanged;
         }
 
         _subscribedFDRs.Clear();
 
-        // Subscribe to all current FDRs
-        foreach (var fdr in FDP2.GetFDRs)
+        // Subscribe to all current FDRs (snapshot to avoid enumeration issues)
+        foreach (var fdr in FDP2.GetFDRs.ToArray())
         {
             _subscribedFDRs[fdr.Callsign] = fdr;
             fdr.PropertyChanged += OnFDRPropertyChanged;
@@ -404,8 +392,17 @@ public class Plugin
                 {
                     if (!hasHoldText)
                     {
-                        // Hold text removed, cancel the hold
-                        CancelHold(existingHold);
+                        // Scenario 1: H/XXX removed from label data
+                        // Only cancel if we own the FDR and hold points still exist in route
+                        if (fdr.IsTrackedByMe)
+                        {
+                            var holdPointsExist = fdr.ParsedRoute.Contains(existingHold.HoldEntryPoint) &&
+                                                  fdr.ParsedRoute.Contains(existingHold.HoldExitPoint);
+                            if (holdPointsExist)
+                            {
+                                CancelHold(existingHold);
+                            }
+                        }
                     }
                     else if (exitTimeMinutes.HasValue)
                     {
@@ -462,7 +459,7 @@ public class Plugin
 
         // Find the segment after the hold entry point for insertion
         var entryIndex = fdr.ParsedRoute.IndexOf(holdEntryPoint);
-        var insertBefore = entryIndex + 1 < fdr.ParsedRoute.Count ? fdr.ParsedRoute[entryIndex + 1] : null;
+        var insertBefore = fdr.ParsedRoute.Skip(entryIndex+1).FirstOrDefault(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT);
 
         // Create route containing just the hold exit segment
         var newRoute = new FDP2.FDR.ExtractedRoute(fdr);
@@ -625,7 +622,7 @@ public class Plugin
         WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
     }
 
-    void StopTracking(HoldItem hold)
+    void UntrackHold(HoldItem hold)
     {
         hold.Dispose();
         _activeHolds.Remove(hold);
@@ -644,15 +641,45 @@ public class Plugin
 
     void CancelHold(HoldItem hold)
     {
-        var fdr = hold.FDR;
+        RemoveHoldFromRoute(hold.FDR, hold.HoldEntryPoint, hold.HoldExitPoint);
+        UntrackHold(hold);
+    }
 
-        // Remove H/XXXXX from LabelOpData
-        var parts = fdr.LabelOpData.Split(' ');
-        var filteredParts = parts.Where(p => !p.StartsWith("H/") && !p.StartsWith("H\\")).ToArray();
-        fdr.LabelOpData = string.Join(" ", filteredParts);
+    void RemoveHoldFromRoute(
+        FDP2.FDR fdr,
+        FDP2.FDR.ExtractedRoute.Segment entrySegment,
+        FDP2.FDR.ExtractedRoute.Segment exitSegment)
+    {
+        var newRoute = new FDP2.FDR.ExtractedRoute(fdr);
+        
+        var exitSegmentIndex = fdr.ParsedRoute.IndexOf(exitSegment);
+        var nextSegment = fdr.ParsedRoute.Skip(exitSegmentIndex + 1).FirstOrDefault(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT);
+        
+        FDP2.ModifyRoute(fdr, newRoute, entrySegment, nextSegment);
+        SyncCancelHold(fdr);
+    }
+    
+    void SyncCancelHold(FDP2.FDR fdr)
+    {
+        try
+        {
+            var networkInstanceProperty = typeof(vatsys.Network).GetField("Instance", BindingFlags.NonPublic | BindingFlags.Static);
+            var networkInstance = (Network)networkInstanceProperty.GetValue(null);
 
-        // Exit segment removal handled by HoldItem.Dispose()
-        StopTracking(hold);
+            var sendFlightPlanChangeMethod = typeof(vatsys.Network).GetMethod(
+                "SendFlightPlanChange",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            sendFlightPlanChangeMethod.Invoke(networkInstance, [fdr]);
+        }
+        catch (TargetInvocationException tie)
+        {
+            var msg = $"Reflection call failed: {tie.InnerException?.GetType().Name} - {tie.InnerException?.Message}";
+            System.Diagnostics.Debug.WriteLine(msg);
+        }
+        catch (Exception ex)
+        {
+            AddError(ex);
+        }
     }
 
     FDP2.FDR.ExtractedRoute.Segment CreateHoldExitSegment(FDP2.FDR.ExtractedRoute.Segment holdEntrySegment, TimeSpan holdDuration)
@@ -725,7 +752,7 @@ public class Plugin
 
             try
             {
-                CancelHold(hold);
+                UntrackHold(hold);
                 WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
             }
             finally
