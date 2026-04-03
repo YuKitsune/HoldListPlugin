@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.Composition;
+﻿using System.Collections.Concurrent;
+using System.ComponentModel.Composition;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Forms;
@@ -30,6 +31,17 @@ namespace HoldPlugin;
 // TODO: Smaller label when in the hold
 // TODO: Clean up
 
+public class FdrSemaphoreProvider
+{
+    readonly ConcurrentDictionary<string, SemaphoreSlim> _semaphores = new();
+
+    public SemaphoreSlim Get(string callsign)
+    {
+        return _semaphores.GetOrAdd(callsign, _ => new SemaphoreSlim(1, 1));
+    }
+}
+
+
 [Export(typeof(IPlugin))]
 public class Plugin
     : IStripPlugin,
@@ -52,6 +64,9 @@ public class Plugin
 
     static readonly Dictionary<string, DateTimeOffset> ErrorMessages = new();
 
+    readonly WorkQueue _workQueue = new(AddError);
+    readonly FdrSemaphoreProvider _semaphoreProvider = new();
+    
     private static readonly string[] _holdLists =
     [
         string.Empty,
@@ -243,18 +258,21 @@ public class Plugin
 
     public void OnRadarTrackUpdate(RDP.RadarTrack updated)
     {
-        try
+        _workQueue.Enqueue(async () =>
         {
-            if (updated.CoupledFDR is null)
-                return;
+            try
+            {
+                if (updated.CoupledFDR is null)
+                    return;
 
-            var holdItem = _activeHolds.FirstOrDefault(h => h.Callsign == updated.CoupledFDR.Callsign);
-            holdItem?.UpdateLevel(updated.CorrectedAltitude);
-        }
-        catch (Exception ex)
-        {
-            AddError(ex);
-        }
+                var holdItem = _activeHolds.FirstOrDefault(h => h.Callsign == updated.CoupledFDR.Callsign);
+                holdItem?.UpdateLevel(updated.CorrectedAltitude);
+            }
+            catch (Exception ex)
+            {
+                AddError(ex);
+            }
+        });
     }
 
     bool TryParseHoldPointFromLabelOpData(FDP2.FDR fdr, out string holdPointName, out int? exitTimeMinutes)
@@ -311,32 +329,38 @@ public class Plugin
     
     void OnSelectedTrackChanged(object? sender, EventArgs e)
     {
-        try
+        _workQueue.Enqueue(async () =>
         {
-            var selectedCallsign = MMI.SelectedTrack?.GetFDR()?.Callsign;
-            foreach (var hold in _activeHolds)
+            try
             {
-                hold.IsDesignated = hold.Callsign == selectedCallsign;
-            }
+                var selectedCallsign = MMI.SelectedTrack?.GetFDR()?.Callsign;
+                foreach (var hold in _activeHolds)
+                {
+                    hold.IsDesignated = hold.Callsign == selectedCallsign;
+                }
 
-            WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
-        }
-        catch (Exception ex)
-        {
-            AddError(ex);
-        }
+                WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
+            }
+            catch (Exception ex)
+            {
+                AddError(ex);
+            }
+        });
     }
 
     void OnFDRsChanged(object? sender, EventArgs e)
     {
-        try
+        _workQueue.Enqueue(async () =>
         {
-            SubscribeToAllFDRs();
-        }
-        catch (Exception ex)
-        {
-            AddError(ex);
-        }
+            try
+            {
+                SubscribeToAllFDRs();
+            }
+            catch (Exception ex)
+            {
+                AddError(ex);
+            }
+        });
     }
 
     void SubscribeToAllFDRs()
@@ -363,45 +387,59 @@ public class Plugin
     /// </summary>
     void OnFDRPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        try
+        if (sender is not FDP2.FDR fdr)
+            return;
+
+        // Only react to LabelOpData changes to detect hold initiation/cancellation
+        if (e.PropertyName != nameof(FDP2.FDR.LabelOpData))
+            return;
+
+        _workQueue.Enqueue(async () =>
         {
-            if (sender is not FDP2.FDR fdr)
-                return;
+            var semaphore = _semaphoreProvider.Get(fdr.Callsign);
+            await semaphore.WaitAsync();
 
-            var existingHold = _activeHolds.FirstOrDefault(h => h.Callsign == fdr.Callsign);
-            var hasHoldText = TryParseHoldPointFromLabelOpData(fdr, out var holdPointPrefix, out var exitTimeMinutes);
-
-            if (existingHold != null)
+            try
             {
-                if (!hasHoldText)
-                {
-                    // Hold text removed, cancel the hold
-                    CancelHold(existingHold);
-                }
-                else if (exitTimeMinutes.HasValue)
-                {
-                    UpdateHold(existingHold, exitTimeMinutes.Value);
-                }
+                var existingHold = _activeHolds.FirstOrDefault(h => h.Callsign == fdr.Callsign);
+                var hasHoldText = TryParseHoldPointFromLabelOpData(fdr, out var holdPointPrefix, out var exitTimeMinutes);
 
-                // Note: Route removal detected by HoldItem PropertyChanged
-            }
-            else
-            {
-                if (hasHoldText)
+                if (existingHold != null)
                 {
-                    // Not tracking yet
-                    if (fdr.IsTrackedByMe)
+                    if (!hasHoldText)
                     {
-                        // We own it, initiate new hold
-                        InitiateHold(fdr, holdPointPrefix, exitTimeMinutes);
+                        // Hold text removed, cancel the hold
+                        CancelHold(existingHold);
+                    }
+                    else if (exitTimeMinutes.HasValue)
+                    {
+                        UpdateHold(existingHold, exitTimeMinutes.Value);
+                    }
+
+                    // Note: Route removal detected by HoldItem PropertyChanged
+                }
+                else
+                {
+                    if (hasHoldText)
+                    {
+                        // Not tracking yet
+                        if (fdr.IsTrackedByMe)
+                        {
+                            // We own it, initiate new hold
+                            InitiateHold(fdr, holdPointPrefix, exitTimeMinutes);
+                        }
                     }
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            AddError(ex);
-        }
+            catch (Exception ex)
+            {
+                AddError(ex);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
     }
 
     void InitiateHold(FDP2.FDR fdr, string holdPointPrefix, int? exitTimeMinutes)
@@ -417,31 +455,56 @@ public class Plugin
             : TimeSpan.FromMinutes(10);
 
         var holdingExitPoint = CreateHoldExitSegment(holdEntryPoint, holdDuration);
-        CreateHoldItem(fdr, holdEntryPoint, holdingExitPoint);
-        
-        // Insert the exit point into the route
-        var index = fdr.ParsedRoute.IndexOf(holdEntryPoint);
-        fdr.ParsedRoute.Insert(index + 1, holdingExitPoint);
 
-        // Re-calculate the onward ETOs
-        FDP2.Process(fdr, routeChanged: true);
+        // Find the segment after the hold entry point for insertion
+        var entryIndex = fdr.ParsedRoute.IndexOf(holdEntryPoint);
+        var insertBefore = entryIndex + 1 < fdr.ParsedRoute.Count ? fdr.ParsedRoute[entryIndex + 1] : null;
+
+        // Create route containing just the hold exit segment
+        var newRoute = new FDP2.FDR.ExtractedRoute(fdr);
+        newRoute.Add(holdingExitPoint);
+
+        // Use vatSys ModifyRoute to insert and sync
+        FDP2.ModifyRoute(fdr, newRoute, holdEntryPoint, insertBefore);
+
+        // FDP2.ModifyRoute will re-parse the route, need to find the updated segments
+        var updatedHoldEntryPoint = fdr.ParsedRoute
+            .Skip(fdr.ParsedRoute.OverflownIndex)
+            .FirstOrDefault(s => s.Intersection.Name == holdEntryPoint.Intersection.Name);
+
+        if (updatedHoldEntryPoint is null)
+            return;
         
-        // Sync the route to other clients
-        SyncInitiateHold(fdr, holdingExitPoint);
+        // Find hold exit point (next occurrence of same intersection, but IsPETO won't be set)
+        var holdEntryPointIndex = fdr.ParsedRoute.IndexOf(updatedHoldEntryPoint);
+        var updatedHoldExitPoint = fdr.ParsedRoute
+            .Skip(holdEntryPointIndex + 1)
+            .FirstOrDefault(s => s.Intersection.Name == updatedHoldEntryPoint.Intersection.Name);
+
+        if (updatedHoldExitPoint is null)
+            return;
+        
+        // Re-set the PETO
+        FDP2.SetPETO(fdr, updatedHoldExitPoint, holdingExitPoint.ETO);
+
+        CreateHoldItem(fdr, updatedHoldEntryPoint, updatedHoldExitPoint);
+        SyncInitiateHold(fdr, updatedHoldExitPoint);
     }
 
     void SyncInitiateHold(FDP2.FDR fdr, FDP2.FDR.ExtractedRoute.Segment holdExitSegment)
     {
         try
         {
-            // vatsys.Network.Instance.SendFlightPlanChange(fdr);
-            // vatsys.Network.Instance.SendEST(petoSegment.Parent.Parent, petoSegment, ClientQueryEstimateType.PETO);
             var networkInstanceProperty = typeof(vatsys.Network).GetField("Instance", BindingFlags.NonPublic | BindingFlags.Static);
             var networkInstance = (Network)networkInstanceProperty.GetValue(null);
 
-            var sendFlightPlanChangeMethod = typeof(vatsys.Network).GetMethod("SendFlightPlanChange", BindingFlags.NonPublic | BindingFlags.Instance);
+            // vatsys.Network.Instance.SendFlightPlanChange(fdr);
+            var sendFlightPlanChangeMethod = typeof(vatsys.Network).GetMethod(
+                "SendFlightPlanChange", 
+                BindingFlags.NonPublic | BindingFlags.Instance);
             sendFlightPlanChangeMethod.Invoke(networkInstance, [fdr]);
 
+            // vatsys.Network.Instance.SendEST(petoSegment.Parent.Parent, petoSegment, ClientQueryEstimateType.PETO);
             var sendEstMethod = typeof(vatsys.Network).GetMethod(
                 "SendEST",
                 BindingFlags.NonPublic | BindingFlags.Instance,
@@ -454,6 +517,12 @@ public class Plugin
                 ],
                 null);
             sendEstMethod.Invoke(networkInstance, [holdExitSegment.Parent.Parent, holdExitSegment, ClientQueryEstimateType.PETO, false]);
+        }
+        catch (TargetInvocationException tie)
+        {
+            // Force log even if throttled
+            var msg = $"Reflection call failed: {tie.InnerException?.GetType().Name} - {tie.InnerException?.Message}";
+            System.Diagnostics.Debug.WriteLine(msg);
         }
         catch (Exception ex)
         {
@@ -586,20 +655,48 @@ public class Plugin
 
     public void Receive(CancelHoldCommand message)
     {
-        var hold = _activeHolds.FirstOrDefault(h => h.Callsign == message.Callsign);
-        if (hold != null)
-            CancelHold(hold);
+        _workQueue.Enqueue(async () =>
+        {
+            var hold = _activeHolds.FirstOrDefault(h => h.Callsign == message.Callsign);
+            if (hold == null)
+                return;
 
-        WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
+            var semaphore = _semaphoreProvider.Get(hold.Callsign);
+            await semaphore.WaitAsync();
+
+            try
+            {
+                CancelHold(hold);
+                WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
     }
 
     public void Receive(RemoveHoldItemCommand message)
     {
-        var hold = _activeHolds.FirstOrDefault(h => h.Callsign == message.Callsign);
-        if (hold != null)
-            CancelHold(hold);
+        _workQueue.Enqueue(async () =>
+        {
+            var hold = _activeHolds.FirstOrDefault(h => h.Callsign == message.Callsign);
+            if (hold == null)
+                return;
 
-        WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
+            var semaphore = _semaphoreProvider.Get(hold.Callsign);
+            await semaphore.WaitAsync();
+
+            try
+            {
+                CancelHold(hold);
+                WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
     }
 
     public void Receive(OpenClearedLevelMenuCommand message)
@@ -626,11 +723,24 @@ public class Plugin
 
     public void Receive(ChangeGlobalOpsCommand message)
     {
-        var fdr = FDP2.GetFDRs.FirstOrDefault(f => f.Callsign == message.Callsign);
-        if (fdr is null)
-            return;
+        _workQueue.Enqueue(async () =>
+        {
+            var fdr = FDP2.GetFDRs.FirstOrDefault(f => f.Callsign == message.Callsign);
+            if (fdr is null)
+                return;
 
-        fdr.GlobalOpData = message.GlobalOps;
+            var semaphore = _semaphoreProvider.Get(fdr.Callsign);
+            await semaphore.WaitAsync();
+
+            try
+            {
+                fdr.GlobalOpData = message.GlobalOps;
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
     }
 
     public void Receive(HoldPointAddedCommand message)
