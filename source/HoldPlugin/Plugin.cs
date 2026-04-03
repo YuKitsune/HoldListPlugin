@@ -23,7 +23,6 @@ namespace HoldPlugin;
 // TODO: Add DLE detection, and Delay menu
 
 // TODO: Inhibit STCA, RAM, DAIW, MSAW, and ETO alerts
-// TODO: Don't remove the hold segments when dropping the tag or handing off
 // TODO: Smaller label when in the hold
 // TODO: Clean up
 
