@@ -54,8 +54,8 @@ public partial class HoldItemViewModel : ObservableObject
         Level = item.Level;
         ClearedFlightLevel = item.ClearedFlightLevel;
         RvsmApproved = item.RvsmApproved;
-        HoldEntryTime = item.HoldEntryPoint.ATO;
-        HoldExitTime = item.HoldExitPoint.ETO;
+        HoldEntryTime = item.HoldEntryTime;
+        HoldExitTime = item.HoldExitTime;
         GlobalOps =  item.GlobalOps;
         State = item.State;
     }
@@ -147,8 +147,8 @@ public partial class HoldItemViewModel : ObservableObject
         Level =  holdItem.Level;
         ClearedFlightLevel = holdItem.ClearedFlightLevel;
         RvsmApproved = holdItem.RvsmApproved;
-        HoldEntryTime = holdItem.HoldEntryPoint.ATO;
-        HoldExitTime = holdItem.HoldExitPoint.ETO;
+        HoldEntryTime = holdItem.HoldEntryTime;
+        HoldExitTime = holdItem.HoldExitTime;
         GlobalOps = holdItem.GlobalOps;
         State = holdItem.State;
     }

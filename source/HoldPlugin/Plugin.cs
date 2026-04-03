@@ -36,7 +36,8 @@ public class Plugin
     IRecipient<ChangeGlobalOpsCommand>,
     IRecipient<RemoveHoldItemCommand>,
     IRecipient<HoldPointAddedCommand>,
-    IRecipient<HoldPointRemovedCommand>
+    IRecipient<HoldPointRemovedCommand>,
+    IRecipient<RefreshHoldsCommand>
 {
     const string HoldIndicatorStripItemTypePrefix = "HoldPlugin_Indicator_";
     
@@ -82,6 +83,7 @@ public class Plugin
         WeakReferenceMessenger.Default.Register<RemoveHoldItemCommand>(this);
         WeakReferenceMessenger.Default.Register<HoldPointAddedCommand>(this);
         WeakReferenceMessenger.Default.Register<HoldPointRemovedCommand>(this);
+        WeakReferenceMessenger.Default.Register<RefreshHoldsCommand>(this);
 
         MMI.SelectedTrackChanged += OnSelectedTrackChanged;
         FDP2.FDRsChanged += OnFDRsChanged;
@@ -194,8 +196,13 @@ public class Plugin
             if (holdInfo is null)
                 return null;
 
-            FDP2.FDR.ExtractedRoute.Segment[] route;
+            if (!TryFindHoldSegments(flightDataRecord, holdInfo.HoldPoint, out var entrySegment, out var exitSegment))
+                return null;
 
+            var entryIndex = flightDataRecord.ParsedRoute.IndexOf(entrySegment);
+            var exitIndex = flightDataRecord.ParsedRoute.IndexOf(exitSegment);
+
+            FDP2.FDR.ExtractedRoute.Segment[] route;
             var overflownIndex = flightDataRecord.ParsedRoute.OverflownIndex;
             if (overflownIndex > 0)
             {
@@ -209,10 +216,11 @@ public class Plugin
 
             if (index >= route.Length)
                 return null;
-            
-            var point = route[index];
 
-            if (holdInfo.HoldEntryPoint == point)
+            var point = route[index];
+            var pointIndex = flightDataRecord.ParsedRoute.IndexOf(point);
+
+            if (pointIndex == entryIndex)
             {
                 return new CustomStripItem
                 {
@@ -220,7 +228,7 @@ public class Plugin
                 };
             }
 
-            if (holdInfo.HoldExitPoint == point)
+            if (pointIndex == exitIndex)
             {
                 return new CustomStripItem
                 {
@@ -253,7 +261,11 @@ public class Plugin
                     return;
 
                 var holdItem = _activeHolds.FirstOrDefault(h => h.Callsign == updated.CoupledFDR.Callsign);
-                holdItem?.UpdateLevel(updated.CorrectedAltitude);
+                if (holdItem is not null)
+                {
+                    holdItem.Level = updated.CorrectedAltitude;
+                    WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
+                }
             }
             catch (Exception ex)
             {
@@ -389,18 +401,15 @@ public class Plugin
 
                 if (existingHold != null)
                 {
+                    // Check for route changes
+                    HandleRouteChanges(fdr, existingHold);
+
                     if (!hasHoldText)
                     {
-                        // Scenario 1: H/XXX removed from label data
-                        // Only cancel if we own the FDR and hold points still exist in route
+                        // H/XXX removed from label data - cancel if we own the FDR
                         if (fdr.IsTrackedByMe)
                         {
-                            var holdPointsExist = fdr.ParsedRoute.Contains(existingHold.HoldEntryPoint) &&
-                                                  fdr.ParsedRoute.Contains(existingHold.HoldExitPoint);
-                            if (holdPointsExist)
-                            {
-                                CancelHold(existingHold);
-                            }
+                            CancelHold(existingHold);
                         }
                     }
                     else if (exitTimeMinutes.HasValue)
@@ -408,21 +417,19 @@ public class Plugin
                         UpdateHold(existingHold, exitTimeMinutes.Value);
                     }
 
-                    // Note: Route removal detected by HoldItem PropertyChanged
+                    // Update FDR-derived properties
+                    UpdateHoldItemFromFDR(fdr, existingHold);
                 }
                 else
                 {
                     if (hasHoldText)
                     {
-                        // Not tracking yet
                         if (fdr.IsTrackedByMe)
                         {
-                            // We own it, initiate new hold
                             InitiateHold(fdr, holdPointPrefix, exitTimeMinutes);
                         }
                         else
                         {
-                            // Not our aircraft, try to adopt existing hold
                             if (TryAdoptHoldFromRoute(fdr, holdPointPrefix, out var entrySegment, out var exitSegment))
                             {
                                 CreateHoldItem(fdr, entrySegment, exitSegment);
@@ -484,8 +491,10 @@ public class Plugin
         if (updatedHoldExitPoint is null)
             return;
         
-        // Re-set the PETO
+        // Set PETO on exit point and disable MPR on both
         FDP2.SetPETO(fdr, updatedHoldExitPoint, holdingExitPoint.ETO);
+        updatedHoldEntryPoint.MPRArmed = false;
+        updatedHoldExitPoint.MPRArmed = false;
 
         CreateHoldItem(fdr, updatedHoldEntryPoint, updatedHoldExitPoint);
         SyncInitiateHold(fdr, updatedHoldExitPoint);
@@ -530,6 +539,38 @@ public class Plugin
         }
     }
 
+    bool TryFindHoldSegments(
+        FDP2.FDR fdr,
+        string holdPointName,
+        out FDP2.FDR.ExtractedRoute.Segment? entrySegment,
+        out FDP2.FDR.ExtractedRoute.Segment? exitSegment)
+    {
+        entrySegment = null;
+        exitSegment = null;
+
+        var waypoints = fdr.ParsedRoute
+            .Skip(fdr.ParsedRoute.OverflownIndex)
+            .Where(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT)
+            .ToArray();
+
+        for (var i = 0; i < waypoints.Length - 1; i++)
+        {
+            var first = waypoints[i];
+            var second = waypoints[i + 1];
+
+            if (first.Intersection.Name == holdPointName &&
+                second.Intersection.Name == holdPointName &&
+                second.IsPETO)
+            {
+                entrySegment = first;
+                exitSegment = second;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     bool TryAdoptHoldFromRoute(
         FDP2.FDR fdr,
         string holdPointPrefix,
@@ -560,6 +601,109 @@ public class Plugin
         }
 
         return false;
+    }
+
+    void HandleRouteChanges(FDP2.FDR fdr, HoldItem hold)
+    {
+        // Check if hold segments still exist in route
+        if (!TryFindHoldSegments(fdr, hold.HoldPoint, out var entrySegment, out var exitSegment))
+        {
+            // Segments not found - check scenarios
+            var overflownWaypoint = fdr.ParsedRoute.ElementAtOrDefault(fdr.ParsedRoute.OverflownIndex);
+            if (overflownWaypoint?.Intersection.Name == hold.HoldPoint)
+            {
+                // Scenario 1: Aircraft reached hold entry, vatSys marked both as passed
+                if (DateTime.UtcNow < hold.HoldExitTime)
+                {
+                    // Re-insert hold exit segment
+                    ReinsertHoldExitSegment(fdr, hold);
+                }
+                else
+                {
+                    // Hold exit time reached, untrack
+                    UntrackHold(hold);
+                }
+            }
+            else
+            {
+                // Scenario 2: Re-routed, entry point no longer in route
+                var holdPointInRoute = fdr.ParsedRoute
+                    .Skip(fdr.ParsedRoute.OverflownIndex)
+                    .Any(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT &&
+                             s.Intersection.Name == hold.HoldPoint);
+
+                if (!holdPointInRoute)
+                {
+                    UntrackHold(hold);
+                }
+            }
+        }
+    }
+
+    void ReinsertHoldExitSegment(FDP2.FDR fdr, HoldItem hold)
+    {
+        // Find the holding point after overflown index
+        var holdingPoint = fdr.ParsedRoute
+            .Skip(fdr.ParsedRoute.OverflownIndex)
+            .FirstOrDefault(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT &&
+                                s.Intersection.Name == hold.HoldPoint);
+
+        if (holdingPoint is null)
+            return;
+
+        var holdDuration = hold.HoldExitTime - holdingPoint.ETO;
+        var holdExitSegment = CreateHoldExitSegment(holdingPoint, holdDuration);
+
+        // Find segment to insert before
+        var holdingPointIndex = fdr.ParsedRoute.IndexOf(holdingPoint);
+        var insertBefore = fdr.ParsedRoute
+            .Skip(holdingPointIndex + 1)
+            .FirstOrDefault(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT);
+
+        var newRoute = new FDP2.FDR.ExtractedRoute(fdr);
+        newRoute.Add(holdExitSegment);
+
+        FDP2.ModifyRoute(fdr, newRoute, holdingPoint, insertBefore);
+
+        // Find updated exit segment and set PETO
+        var updatedHoldingPoint = fdr.ParsedRoute
+            .Skip(fdr.ParsedRoute.OverflownIndex)
+            .FirstOrDefault(s => s.Intersection.Name == hold.HoldPoint);
+
+        if (updatedHoldingPoint is null)
+            return;
+
+        var updatedHoldingPointIndex = fdr.ParsedRoute.IndexOf(updatedHoldingPoint);
+        var updatedExitSegment = fdr.ParsedRoute
+            .Skip(updatedHoldingPointIndex + 1)
+            .FirstOrDefault(s => s.Intersection.Name == hold.HoldPoint);
+
+        if (updatedExitSegment is null)
+            return;
+
+        FDP2.SetPETO(fdr, updatedExitSegment, hold.HoldExitTime);
+        updatedHoldingPoint.MPRArmed = false;
+        updatedExitSegment.MPRArmed = false;
+    }
+
+    void UpdateHoldItemFromFDR(FDP2.FDR fdr, HoldItem hold)
+    {
+        IClearedFlightLevel clearedFlightLevel = fdr.CFLLower <= 0
+            ? new ClearedFlightLevel(fdr.CFLUpper)
+            : new ClearedBlockLevel(fdr.CFLLower, fdr.CFLUpper);
+
+        HoldItemState state;
+        if (fdr.IsHandoff || (fdr.IsTrackedByMe && fdr.HandoffController is not null))
+            state = HoldItemState.Handover;
+        else if (fdr.IsTrackedByMe)
+            state = HoldItemState.Jurisdiction;
+        else
+            state = HoldItemState.Unconcerned;
+
+        hold.ClearedFlightLevel = clearedFlightLevel;
+        hold.RvsmApproved = fdr.RVSM;
+        hold.GlobalOps = fdr.GlobalOpData;
+        hold.State = state;
     }
 
     TimeSpan CalculateHoldDuration(DateTime entryEto, int exitTimeMinutes)
@@ -604,14 +748,14 @@ public class Plugin
             state = HoldItemState.Unconcerned;
 
         var holdItem = new HoldItem(
-            fdr,
+            fdr.Callsign,
             exitSegment.Intersection.Name,
+            entrySegment.ATO,
+            exitSegment.ETO,
             isDesignated,
             level,
             clearedFlightLevel,
             fdr.RVSM,
-            entrySegment,
-            exitSegment,
             fdr.GlobalOpData,
             state);
 
@@ -623,24 +767,43 @@ public class Plugin
 
     void UntrackHold(HoldItem hold)
     {
-        hold.Dispose();
         _activeHolds.Remove(hold);
         WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
     }
 
     void UpdateHold(HoldItem hold, int exitTimeMinutes)
     {
-        var duration = CalculateHoldDuration(hold.HoldEntryPoint.ETO, exitTimeMinutes);
-        
-        var exitEto = hold.HoldEntryPoint.ETO.Add(duration);
-        hold.HoldExitPoint.EET = duration;
-        hold.HoldExitPoint.ETO = exitEto;
-        FDP2.Process(hold.FDR, routeChanged: true);
+        var fdr = FDP2.GetFDRs.FirstOrDefault(f => f.Callsign == hold.Callsign);
+        if (fdr is null)
+            return;
+
+        if (!TryFindHoldSegments(fdr, hold.HoldPoint, out var entrySegment, out var exitSegment))
+            return;
+
+        var duration = CalculateHoldDuration(entrySegment.ETO, exitTimeMinutes);
+        var exitEto = entrySegment.ETO.Add(duration);
+
+        exitSegment.EET = duration;
+        exitSegment.ETO = exitEto;
+        hold.HoldExitTime = exitEto;
+
+        FDP2.Process(fdr, routeChanged: true);
     }
 
     void CancelHold(HoldItem hold)
     {
-        RemoveHoldFromRoute(hold.FDR, hold.HoldEntryPoint, hold.HoldExitPoint);
+        var fdr = FDP2.GetFDRs.FirstOrDefault(f => f.Callsign == hold.Callsign);
+        if (fdr is null)
+        {
+            UntrackHold(hold);
+            return;
+        }
+
+        if (TryFindHoldSegments(fdr, hold.HoldPoint, out var entrySegment, out var exitSegment))
+        {
+            RemoveHoldFromRoute(fdr, entrySegment, exitSegment);
+        }
+
         UntrackHold(hold);
     }
 
@@ -686,7 +849,7 @@ public class Plugin
         return new FDP2.FDR.ExtractedRoute.Segment(holdEntrySegment.Parent)
         {
             Intersection = holdEntrySegment.Intersection,
-            Distance = 0,
+            Distance = 1,
             GroundSpeed = holdEntrySegment.GroundSpeed,
             Track = holdEntrySegment.Track,
             RequestedLevel = holdEntrySegment.RequestedLevel,
@@ -777,10 +940,17 @@ public class Plugin
     public void Receive(OpenHoldExitMenuCommand message)
     {
         var holdItem = ActiveHolds.FirstOrDefault(h => h.Callsign == message.Callsign);
-        if (holdItem == null)
+        if (holdItem is null)
             return;
-        
-        MMI.OpenPETOMenu(holdItem.HoldExitPoint);
+
+        var fdr = FDP2.GetFDRs.FirstOrDefault(f => f.Callsign == message.Callsign);
+        if (fdr is null)
+            return;
+
+        if (!TryFindHoldSegments(fdr, holdItem.HoldPoint, out _, out var exitSegment))
+            return;
+
+        MMI.OpenPETOMenu(exitSegment);
     }
 
     public void Receive(ChangeGlobalOpsCommand message)
