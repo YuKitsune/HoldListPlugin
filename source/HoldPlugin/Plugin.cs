@@ -390,10 +390,6 @@ public class Plugin
         if (sender is not FDP2.FDR fdr)
             return;
 
-        // Only react to LabelOpData changes to detect hold initiation/cancellation
-        if (e.PropertyName != nameof(FDP2.FDR.LabelOpData))
-            return;
-
         _workQueue.Enqueue(async () =>
         {
             var semaphore = _semaphoreProvider.Get(fdr.Callsign);
@@ -427,6 +423,14 @@ public class Plugin
                         {
                             // We own it, initiate new hold
                             InitiateHold(fdr, holdPointPrefix, exitTimeMinutes);
+                        }
+                        else
+                        {
+                            // Not our aircraft, try to adopt existing hold
+                            if (TryAdoptHoldFromRoute(fdr, holdPointPrefix, out var entrySegment, out var exitSegment))
+                            {
+                                CreateHoldItem(fdr, entrySegment, exitSegment);
+                            }
                         }
                     }
                 }
@@ -528,6 +532,38 @@ public class Plugin
         {
             AddError(ex);
         }
+    }
+
+    bool TryAdoptHoldFromRoute(
+        FDP2.FDR fdr,
+        string holdPointPrefix,
+        out FDP2.FDR.ExtractedRoute.Segment? entrySegment,
+        out FDP2.FDR.ExtractedRoute.Segment? exitSegment)
+    {
+        entrySegment = null;
+        exitSegment = null;
+
+        var waypoints = fdr.ParsedRoute
+            .Skip(fdr.ParsedRoute.OverflownIndex)
+            .Where(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT)
+            .ToArray();
+
+        for (var i = 0; i < waypoints.Length - 1; i++)
+        {
+            var first = waypoints[i];
+            var second = waypoints[i + 1];
+
+            if (first.Intersection.Name == second.Intersection.Name &&
+                first.Intersection.Name.StartsWith(holdPointPrefix) &&
+                second.IsPETO)
+            {
+                entrySegment = first;
+                exitSegment = second;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     TimeSpan CalculateHoldDuration(DateTime entryEto, int exitTimeMinutes)
