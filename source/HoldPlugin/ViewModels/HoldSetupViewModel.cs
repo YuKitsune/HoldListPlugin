@@ -63,7 +63,7 @@ public partial class HoldSetupViewModel : ObservableObject
         }
 
         public string DisplayText => string.IsNullOrWhiteSpace(HoldPointName)
-            ? "XXXXXXXXXXX"
+            ? "           "
             : HoldPointName;
 
         [RelayCommand]
