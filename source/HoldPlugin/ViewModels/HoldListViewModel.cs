@@ -1,4 +1,5 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+﻿using System.Collections.ObjectModel;
+using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Messaging;
 using HoldPlugin.Contracts;
 
@@ -9,7 +10,7 @@ public partial class HoldListViewModel : ObservableObject, IRecipient<RefreshHol
     readonly IWindowHandle _windowHandle;
     
     [ObservableProperty] string _holdPointName = "";
-    [ObservableProperty] HoldItemViewModel[] _items = [];
+    [ObservableProperty] ObservableCollection<HoldItemViewModel> _items = [];
     
 #if DEBUG
     // Designer ctor
@@ -61,16 +62,33 @@ public partial class HoldListViewModel : ObservableObject, IRecipient<RefreshHol
 
     void Refresh(IEnumerable<HoldItem> holdItems)
     {
-        var viewModels = holdItems
+        var relevantHoldItems = holdItems
             .Where(ShouldDisplay)
             .OrderByDescending(LowestLevel)
-            .Select(i => new HoldItemViewModel(i))
             .ToArray();
         
-        if (viewModels.Length == 0)
+        if (relevantHoldItems.Length == 0)
             _windowHandle.Close();
-
-        Items = viewModels;
+        
+        foreach (var relevantHoldItem in relevantHoldItems)
+        {
+            var viewModel = Items.FirstOrDefault(vm => vm.AircraftId == relevantHoldItem.Callsign);
+            if (viewModel is not null)
+            {
+                viewModel.Update(relevantHoldItem);
+            }
+            else
+            {
+                Items.Add(new HoldItemViewModel(relevantHoldItem));
+            }
+        }
+        
+        var removed = Items.Where(vm => relevantHoldItems.All(i => i.Callsign != vm.AircraftId));
+        foreach (var toRemove in removed)
+        {
+            Items.Remove(toRemove);
+        }
+        
         return;
 
         bool ShouldDisplay(HoldItem item)
