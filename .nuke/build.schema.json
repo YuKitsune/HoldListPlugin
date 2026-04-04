@@ -30,7 +30,6 @@
         "Package",
         "Release",
         "Repack",
-        "Test",
         "Uninstall"
       ]
     },
@@ -123,7 +122,7 @@
         },
         "VatSysPath": {
           "type": "string",
-          "description": "Path to vatSys installation"
+          "description": "Path to the vatSys installation"
         }
       }
     },

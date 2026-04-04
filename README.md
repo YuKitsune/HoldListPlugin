@@ -1,13 +1,13 @@
 <h1 align="center">
-  Hold List Plugin
+  Hold Plugin
 </h1>
 
 <h3 align="center">
-  A vatSys plugin adding a Eurocat-style Hold Window.
+  A vatSys plugin adding a Eurocat-style Hold list.
 
-  [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/yukitsune/HoldListPlugin/build.yml?branch=main)](https://github.com/YuKitsune/HoldListPlugin/actions/workflows/build.yml)
-  [![License](https://img.shields.io/github/license/YuKitsune/HoldListPlugin)](https://github.com/YuKitsune/HoldListPlugin/blob/main/LICENSE)
-  [![Latest Release](https://img.shields.io/github/v/release/YuKitsune/HoldListPlugin?include_prereleases)](https://github.com/YuKitsune/HoldListPlugin/releases)
+  [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/yukitsune/HoldPlugin/build.yml?branch=main)](https://github.com/YuKitsune/HoldPlugin/actions/workflows/build.yml)
+  [![License](https://img.shields.io/github/license/YuKitsune/HoldPlugin)](https://github.com/YuKitsune/HoldPlugin/blob/main/LICENSE)
+  [![Latest Release](https://img.shields.io/github/v/release/YuKitsune/HoldPlugin?include_prereleases)](https://github.com/YuKitsune/HoldPlugin/releases)
 
   <!-- <img src="./README.png" width="320" /> -->
 </h3>
@@ -41,7 +41,7 @@ Any aircraft holding at a waypoint not configured with its own hold list will be
 
 Ensure you have [vatSys](https://virtualairtrafficsystem.com/) version 1.4.20 or later installed, and .NET Framework 4.7.2 or later.
 
-1. Download the [latest release from GitHub](https://github.com/YuKitsune/HoldListPlugin/releases)
+1. Download the [latest release from GitHub](https://github.com/YuKitsune/HoldPlugin/releases)
 2. Extract `HoldPlugin.dll` into your vatSys plugins directory:
    ```
    Documents\vatSys Files\Profiles\<Profile Name>\Plugins\HoldPlugin
