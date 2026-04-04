@@ -8,6 +8,7 @@ namespace HoldPlugin.ViewModels;
 public partial class HoldListViewModel : ObservableObject, IRecipient<RefreshHoldsCommand>
 {
     readonly IWindowHandle _windowHandle;
+    readonly GuiInvoker _guiInvoker;
     
     [ObservableProperty] string _holdPointName = "";
     [ObservableProperty] ObservableCollection<HoldItemViewModel> _items = [];
@@ -16,6 +17,7 @@ public partial class HoldListViewModel : ObservableObject, IRecipient<RefreshHol
     // Designer ctor
     public HoldListViewModel()
     {
+        _guiInvoker = null!;
         _windowHandle = null!;
         
         Items =
@@ -45,19 +47,21 @@ public partial class HoldListViewModel : ObservableObject, IRecipient<RefreshHol
     }
 #endif
 
-    public HoldListViewModel(string pointName, HoldItem[] items, IWindowHandle windowHandle)
+    public HoldListViewModel(string pointName, HoldItem[] items, IWindowHandle windowHandle, GuiInvoker guiInvoker)
     {
         _windowHandle = windowHandle;
-        
+        _guiInvoker = guiInvoker;
+
         HoldPointName = pointName;
         Refresh(items);
+        _guiInvoker.InvokeOnUiThread(_ => Refresh(items));
 
         WeakReferenceMessenger.Default.Register(this);
     }
 
     public void Receive(RefreshHoldsCommand message)
     {
-        Refresh(Plugin.ActiveHolds);
+        _guiInvoker.InvokeOnUiThread(_ => Refresh(Plugin.ActiveHolds));
     }
 
     void Refresh(IEnumerable<HoldItem> holdItems)
@@ -69,6 +73,8 @@ public partial class HoldListViewModel : ObservableObject, IRecipient<RefreshHol
         
         if (relevantHoldItems.Length == 0)
             _windowHandle.Close();
+
+        var callsigns = Items.Select(x => x.AircraftId).ToList();
         
         foreach (var relevantHoldItem in relevantHoldItems)
         {
@@ -81,12 +87,15 @@ public partial class HoldListViewModel : ObservableObject, IRecipient<RefreshHol
             {
                 Items.Add(new HoldItemViewModel(relevantHoldItem));
             }
+
+            callsigns.Remove(relevantHoldItem.Callsign);
         }
         
-        var removed = Items.Where(vm => relevantHoldItems.All(i => i.Callsign != vm.AircraftId));
-        foreach (var toRemove in removed)
+        foreach (var callsignToRemove in callsigns)
         {
-            Items.Remove(toRemove);
+            var vm = Items.FirstOrDefault(x => x.AircraftId ==  callsignToRemove);
+            if (vm is not null)
+                Items.Remove(vm);
         }
         
         return;

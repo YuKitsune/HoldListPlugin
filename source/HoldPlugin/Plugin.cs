@@ -142,7 +142,7 @@ public class Plugin
                     $"HOLD {holdList} WINDOW",
                     handle =>
                     {
-                        var viewModel = new HoldListViewModel(holdList, itemsToDisplay, handle);
+                        var viewModel = new HoldListViewModel(holdList, itemsToDisplay, handle, new GuiInvoker(MMI.InvokeOnGUI));
                         var view = new HoldList(viewModel);
                         return view;
                     },
@@ -163,7 +163,7 @@ public class Plugin
                 "HOLD OTHER WINDOW",
                 handle =>
                 {
-                    var viewModel = new HoldListViewModel(string.Empty, otherHolds, handle);
+                    var viewModel = new HoldListViewModel(string.Empty, otherHolds, handle, new GuiInvoker(MMI.InvokeOnGUI));
                     var view = new HoldList(viewModel);
                     return view;
                 },
