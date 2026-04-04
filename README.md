@@ -37,6 +37,22 @@ Any aircraft holding at a waypoint not configured with its own hold list will be
 
 ![All Windows](./all-windows.png)
 
+## Installation
+
+Ensure you have [vatSys](https://virtualairtrafficsystem.com/) version 1.4.20 or later installed, and .NET Framework 4.7.2 or later.
+
+1. Download the [latest release from GitHub](https://github.com/YuKitsune/HoldListPlugin/releases)
+2. Extract `HoldPlugin.dll` into your vatSys plugins directory:
+   ```
+   Documents\vatSys Files\Profiles\<Profile Name>\Plugins\HoldPlugin
+   ```
+3. Run `unblock-dlls.bat` (included in the zip) to unblock the DLL files
+
+## Verification
+
+1. Open vatSys
+2. Look for the `Hold Setup` menu item under the `Tools` menu
+
 ## Limitations
 
 - The hold entry and exit times are not displayed in the vatSys strip due to limitations with the vatSys SDK

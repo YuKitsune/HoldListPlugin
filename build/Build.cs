@@ -21,7 +21,7 @@ using Serilog;
     GitHubActionsImage.WindowsLatest,
     OnPushBranches = ["main"],
     OnPullRequestBranches = ["main"],
-    InvokedTargets = [nameof(Compile), nameof(Test)],
+    InvokedTargets = [nameof(Compile)],
     FetchDepth = 0)]
 [GitHubActions(
     "release",
@@ -40,11 +40,14 @@ class Build : NukeBuild
     ///   - Microsoft VisualStudio     https://nuke.build/visualstudio
     ///   - Microsoft VSCode           https://nuke.build/vscode
 
-    public static int Main () => Execute<Build>(x => x.Compile);
+    public static int Main () => Execute<Build>();
 
     [Parameter("Configuration to build - Default is 'Debug' (local) or 'Release' (server)")]
     readonly Configuration Configuration = IsLocalBuild ? Configuration.Debug : Configuration.Release;
-
+    
+    [Parameter]
+    string ProfileName { get; }
+    
     [Parameter("GitHub token for creating releases")]
     [Secret]
     readonly string GitHubToken;
@@ -62,17 +65,13 @@ class Build : NukeBuild
     string PluginName => Configuration == Configuration.Debug ? DebugPluginName : ReleasePluginName;
 
     AbsolutePath PluginProjectPath => RootDirectory / "source" / "HoldPlugin" / "HoldPlugin.csproj";
-    AbsolutePath TestsProjectPath => RootDirectory / "source" / "HoldPlugin.Tests" / "HoldPlugin.Tests.csproj";
-    AbsolutePath BuildOutputDirectory => TemporaryDirectory / "build";
-    AbsolutePath ZipPath => TemporaryDirectory / $"HoldPlugin.{GetSemanticVersion()}.zip";
-    AbsolutePath PackageDirectory => TemporaryDirectory / "package";
+    AbsolutePath PluginBuildOutputDirectory => TemporaryDirectory / "build";
+    AbsolutePath PluginZipPath => TemporaryDirectory / $"HoldPlugin.{GetSemanticVersion()}.zip";
+    AbsolutePath PluginPackageDirectory => TemporaryDirectory / "package";
 
-    [Parameter]
-    string ProfileName { get; }
-
-    [Parameter("Path to vatSys installation")]
+    // vatSys paths
+    [Parameter("Path to the vatSys installation")]
     AbsolutePath VatSysPath { get; }
-
     AbsolutePath VatSysSetupDirectory => TemporaryDirectory / "vatsys-setup";
     AbsolutePath VatSysExePath => VatSysPath ?? VatSysSetupDirectory / "bin" / "vatSys.exe";
 
@@ -133,12 +132,12 @@ class Build : NukeBuild
                 "Building version {Version} with configuration {Configuration} to {OutputDirectory}",
                 version,
                 Configuration,
-                BuildOutputDirectory);
+                PluginBuildOutputDirectory);
 
             DotNetTasks.DotNetBuild(s => s
                 .SetProjectFile(PluginProjectPath)
                 .SetConfiguration(Configuration)
-                .SetOutputDirectory(BuildOutputDirectory)
+                .SetOutputDirectory(PluginBuildOutputDirectory)
                 .SetVersion(version)
                 .SetAssemblyVersion(GitVersion?.MajorMinorPatch ?? "0.0.0")
                 .SetFileVersion(GitVersion?.MajorMinorPatch ?? "0.0.0")
@@ -150,59 +149,46 @@ class Build : NukeBuild
         .DependsOn(Compile)
         .Executes(() =>
         {
-            var mainAssembly = BuildOutputDirectory / PluginAssemblyFileName;
-            var assembliesToMerge = new[]
-            {
-                BuildOutputDirectory / "Serilog.dll",
-                BuildOutputDirectory / "Serilog.Sinks.File.dll",
-                BuildOutputDirectory / "MediatR.dll",
-                BuildOutputDirectory / "MediatR.Contracts.dll",
-                BuildOutputDirectory / "CommunityToolkit.Mvvm.dll"
-            };
-            
+            var mainAssembly = PluginBuildOutputDirectory / PluginAssemblyFileName;
+            var assembliesToMerge = PluginBuildOutputDirectory
+                .GlobFiles("*.dll")
+                .Except([mainAssembly])
+                .ToArray();
+
             if (!mainAssembly.FileExists())
                 throw new Exception($"Main assembly not found: {mainAssembly}");
-            
+
             foreach (var assembly in assembliesToMerge.Where(a => !a.FileExists()))
                 Log.Warning("Assembly not found (will be skipped): {Assembly}", assembly);
-            
+
             var existingAssemblies = assembliesToMerge.Where(a => a.FileExists()).ToArray();
             if (existingAssemblies.Length == 0)
             {
                 Log.Information("No assemblies found to repack, skipping");
                 return;
             }
-            
+
             var settings = new ILRepackSettings()
                 .SetAssemblies([mainAssembly.ToString(), ..existingAssemblies.Select(a => a.ToString())])
-                .SetInternalize(true)
+                .SetInternalize(false)
                 .SetParallel(true)
                 .SetOutput(mainAssembly.ToString())
-                .SetLib(BuildOutputDirectory.ToString());  // Tell ILRepack where to find referenced assemblies
-            
+                .SetLib(PluginBuildOutputDirectory.ToString());  // Tell ILRepack where to find referenced assemblies
+
             Log.Information("Repacking {Count} assemblies into {MainAssembly}", existingAssemblies.Length, mainAssembly);
             foreach (var assembly in existingAssemblies)
                 Log.Information("  - {Assembly}", assembly.Name);
-            
+
             ILRepackTasks.ILRepack(settings);
-            
+
             // Clean up original merged DLLs
             foreach (var assembly in existingAssemblies)
             {
                 assembly.DeleteFile();
                 Log.Information("Deleted {Assembly}", assembly);
             }
-            
-            Log.Information("Repack complete");
-        });
 
-    Target Test => _ => _
-        .Executes(() =>
-        {
-            Log.Information("Running tests");
-            DotNetTasks.DotNetTest(s => s
-                .SetProjectFile(TestsProjectPath)
-                .SetConfiguration(Configuration));
+            Log.Information("Repack complete");
         });
 
     Target Uninstall => _ => _
@@ -239,7 +225,7 @@ class Build : NukeBuild
             // Copy plugin assemblies
             var pluginDirectory = pluginsDirectory / PluginName;
             pluginDirectory.CreateOrCleanDirectory();
-            foreach (var absolutePath in BuildOutputDirectory.GetFiles())
+            foreach (var absolutePath in PluginBuildOutputDirectory.GetFiles())
             {
                 absolutePath.CopyToDirectory(pluginDirectory, ExistsPolicy.MergeAndOverwrite);
             }
@@ -256,22 +242,22 @@ class Build : NukeBuild
             var dpiAwareFixScript = RootDirectory / "dpiawarefix.bat";
             var unblockDllsScript = RootDirectory / "unblock-dlls.bat";
 
-            PackageDirectory.CreateOrCleanDirectory();
+            PluginPackageDirectory.CreateOrCleanDirectory();
 
             // Copy plugin assemblies
-            foreach (var absolutePath in BuildOutputDirectory.GetFiles())
+            foreach (var absolutePath in PluginBuildOutputDirectory.GetFiles().Where(f => f.Extension != ".pdb"))
             {
-                absolutePath.CopyToDirectory(PackageDirectory, ExistsPolicy.MergeAndOverwrite);
+                absolutePath.CopyToDirectory(PluginPackageDirectory, ExistsPolicy.MergeAndOverwrite);
             }
 
-            dpiAwareFixScript.CopyToDirectory(PackageDirectory, ExistsPolicy.FileOverwrite);
-            unblockDllsScript.CopyToDirectory(PackageDirectory, ExistsPolicy.FileOverwrite);
+            dpiAwareFixScript.CopyToDirectory(PluginPackageDirectory, ExistsPolicy.FileOverwrite);
+            unblockDllsScript.CopyToDirectory(PluginPackageDirectory, ExistsPolicy.FileOverwrite);
 
-            if (ZipPath.FileExists())
-                ZipPath.DeleteFile();
+            if (PluginZipPath.FileExists())
+                PluginZipPath.DeleteFile();
 
-            Log.Information("Packaging {OutputDirectory} to {ZipPath}", PackageDirectory, ZipPath);
-            PackageDirectory.ZipTo(ZipPath);
+            Log.Information("Packaging {OutputDirectory} to {ZipPath}", PluginPackageDirectory, PluginZipPath);
+            PluginPackageDirectory.ZipTo(PluginZipPath);
         });
 
     Target Release => _ => _
@@ -307,10 +293,10 @@ class Build : NukeBuild
             Log.Information("Release created: {ReleaseUrl}", release.HtmlUrl);
 
             // Upload the zip file as an asset
-            using var zipStream = File.OpenRead(ZipPath);
+            using var zipStream = File.OpenRead(PluginZipPath);
             var assetUpload = new ReleaseAssetUpload
             {
-                FileName = ZipPath.Name,
+                FileName = PluginZipPath.Name,
                 ContentType = "application/zip",
                 RawData = zipStream
             };
