@@ -156,7 +156,8 @@
                                              MaxLength="15"
                                              HorizontalAlignment="Stretch"
                                              LostFocus="GlobalOpsTextBox_LostFocus"
-                                             IsVisibleChanged="GlobalOpsTextBox_IsVisibleChanged">
+                                             IsVisibleChanged="GlobalOpsTextBox_IsVisibleChanged"
+                                             MouseLeave="GlobalOpsTextBox_MouseLeave">
                                         <TextBox.InputBindings>
                                             <KeyBinding Key="Return" Command="{Binding CommitGlobalOpsEditCommand}"/>
                                             <KeyBinding Key="Escape" Command="{Binding CancelGlobalOpsEditCommand}"/>

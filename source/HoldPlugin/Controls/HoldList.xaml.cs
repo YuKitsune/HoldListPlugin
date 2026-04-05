@@ -24,8 +24,16 @@ public partial class HoldList : UserControl
     {
         if (sender is not TextBox textBox || e.NewValue is not bool isVisible || !isVisible)
             return;
-        
+
         textBox.Focus();
         textBox.SelectAll();
+    }
+
+    void GlobalOpsTextBox_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (sender is not TextBox { DataContext: HoldItemViewModel viewModel })
+            return;
+
+        viewModel.CancelGlobalOpsEditCommand.Execute(null);
     }
 }

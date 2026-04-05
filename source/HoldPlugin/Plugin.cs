@@ -115,7 +115,7 @@ public class Plugin
 
     void OpenHoldSetup()
     {
-        _windowManager.FocusOrCreateWindow(
+        _windowManager.TryCreateWindow(
             WindowKeys.HoldSetup,
             "Hold Setup",
             _ =>
@@ -137,7 +137,7 @@ public class Plugin
 
             if (itemsToDisplay.Any())
             {
-                _windowManager.FocusOrCreateWindow(
+                _windowManager.TryCreateWindow(
                     WindowKeys.HoldFor(holdList),
                     $"HOLD {holdList} WINDOW",
                     handle =>
@@ -158,7 +158,7 @@ public class Plugin
             .ToArray();
         if (otherHolds.Any())
         {
-            _windowManager.FocusOrCreateWindow(
+            _windowManager.TryCreateWindow(
                 WindowKeys.HoldOther(),
                 "HOLD OTHER WINDOW",
                 handle =>

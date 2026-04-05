@@ -7,7 +7,7 @@ public class WindowManager(GuiInvoker guiInvoker)
 {
     readonly IDictionary<string, VatSysForm> _windows = new Dictionary<string, VatSysForm>();
 
-    public void FocusOrCreateWindow(
+    public void TryCreateWindow(
         string key,
         string title,
         Func<IWindowHandle, UIElement> createView,
@@ -21,7 +21,6 @@ public class WindowManager(GuiInvoker guiInvoker)
         {
             if (_windows.TryGetValue(key, out var existingWindowHandle))
             {
-                existingWindowHandle.Focus();
                 return;
             }
 
