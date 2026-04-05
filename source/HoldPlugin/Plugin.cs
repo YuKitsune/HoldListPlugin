@@ -245,7 +245,7 @@ public class Plugin
     public void OnFDRUpdate(FDP2.FDR updated)
     {
         // Unused
-        // Hold detection is handled by OnAnyFDRPropertyChanged for immediate response
+        // Hold detection is handled by OnFDRPropertyChanged for immediate response
     }
 
     public void OnRadarTrackUpdate(RDP.RadarTrack updated)
@@ -411,10 +411,31 @@ public class Plugin
         if (sender is not FDP2.FDR fdr)
             return;
 
+        // Only process relevant property changes to avoid queue backlog
+        string[] relevantPropertyNames =
+        [
+            nameof(FDP2.FDR.LabelOpData),
+            nameof(FDP2.FDR.GlobalOpData),
+            nameof(FDP2.FDR.CFLUpper),
+            nameof(FDP2.FDR.CFLLower),
+            nameof(FDP2.FDR.RVSM),
+            nameof(FDP2.FDR.IsTrackedByMe),
+            nameof(FDP2.FDR.IsHandoff),
+            nameof(FDP2.FDR.HandoffController),
+            nameof(FDP2.FDR.ParsedRoute)
+        ];
+
+        if (!relevantPropertyNames.Contains(e.PropertyName))
+            return;
+        
+        Debug.WriteLine($"[HOLD{DateTime.UtcNow:HH:mm:ss}] Queued FDR Update for {fdr.Callsign}");
+        
         _workQueue.Enqueue(async () =>
         {
             var semaphore = _semaphoreProvider.Get(fdr.Callsign);
             await semaphore.WaitAsync();
+
+            Debug.WriteLine($"[HOLD {DateTime.UtcNow:HH:mm:ss}] Executing FDR Update for {fdr.Callsign}");
 
             try
             {
@@ -446,6 +467,8 @@ public class Plugin
                         InitiateHold(fdr, holdPointPrefix, exitTimeMinutes);
                     }
                 }
+
+                WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
             }
             catch (Exception ex)
             {
