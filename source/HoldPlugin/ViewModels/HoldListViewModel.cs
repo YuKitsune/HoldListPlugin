@@ -97,7 +97,14 @@ public partial class HoldListViewModel : ObservableObject, IRecipient<RefreshHol
             if (vm is not null)
                 Items.Remove(vm);
         }
-        
+
+        for (var i = 0; i < relevantHoldItems.Length; i++)
+        {
+            var currentIndex = Items.IndexOf(Items.First(x => x.AircraftId == relevantHoldItems[i].Callsign));
+            if (currentIndex != i)
+                Items.Move(currentIndex, i);
+        }
+
         return;
 
         bool ShouldDisplay(HoldItem item)
