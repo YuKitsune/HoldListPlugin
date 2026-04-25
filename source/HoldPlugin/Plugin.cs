@@ -45,18 +45,18 @@ public class Plugin
     readonly WorkQueue _workQueue = new(AddError);
     readonly FdrSemaphoreProvider _semaphoreProvider = new();
 
-    private static readonly string[] _holdLists =
+    private static readonly IHoldPointDescriptor[] _holdLists =
     [
-        string.Empty,
-        string.Empty,
-        string.Empty,
-        string.Empty
+        new Unallocated(),
+        new Unallocated(),
+        new Unallocated(),
+        new Unallocated()
     ];
 
     static readonly List<HoldItem> _activeHolds = [];
     readonly Dictionary<string, FDP2.FDR> _subscribedFDRs = new();
 
-    public static IReadOnlyCollection<string> HoldLists => _holdLists;
+    public static IReadOnlyCollection<IHoldPointDescriptor> HoldLists => _holdLists;
     public static IReadOnlyCollection<HoldItem> ActiveHolds => _activeHolds.ToArray();
 
     readonly WindowManager _windowManager;
@@ -129,20 +129,25 @@ public class Plugin
 
     void EnsureHoldWindowsAreOpen()
     {
-        foreach (var holdList in HoldLists)
+        foreach (var descriptor in HoldLists)
         {
+            var holdPointName = descriptor.GetHoldPointName();
+
+            if (holdPointName is null)
+                continue;
+
             var itemsToDisplay = ActiveHolds
-                .Where(h => h.HoldPoint == holdList && h.State != HoldItemState.Unconcerned)
+                .Where(h => h.HoldPoint == holdPointName && h.State != HoldItemState.Unconcerned)
                 .ToArray();
 
             if (itemsToDisplay.Any())
             {
                 _windowManager.TryCreateWindow(
-                    WindowKeys.HoldFor(holdList),
-                    $"HOLD {holdList} WINDOW",
+                    WindowKeys.HoldFor(holdPointName),
+                    $"HOLD {holdPointName} WINDOW",
                     handle =>
                     {
-                        var viewModel = new HoldListViewModel(holdList, itemsToDisplay, handle, new GuiInvoker(MMI.InvokeOnGUI));
+                        var viewModel = new HoldListViewModel(holdPointName, itemsToDisplay, handle, new GuiInvoker(MMI.InvokeOnGUI));
                         var view = new HoldList(viewModel);
                         return view;
                     },
@@ -152,9 +157,10 @@ public class Plugin
                     new Size(480, 150));
             }
         }
-        
+
+        var allocatedNames = GetAllocatedHoldPointNames();
         var otherHolds = ActiveHolds
-            .Where(h => !HoldLists.Contains(h.HoldPoint) && h.State != HoldItemState.Unconcerned)
+            .Where(h => !allocatedNames.Contains(h.HoldPoint) && h.State != HoldItemState.Unconcerned)
             .ToArray();
         if (otherHolds.Any())
         {
@@ -172,6 +178,41 @@ public class Plugin
                 canMinimise: false,
                 new Size(480, 150));
         }
+    }
+
+    static HashSet<string> GetAllocatedHoldPointNames() =>
+        _holdLists
+            .Select(d => d.GetHoldPointName())
+            .Where(n => n is not null)
+            .ToHashSet()!;
+
+    void TryAutoAllocateSlot(string holdPoint)
+    {
+        var alreadyAllocated = _holdLists.Any(d => d.Matches(holdPoint));
+
+        if (alreadyAllocated)
+            return;
+
+        var emptySlotIndex = Array.FindIndex(_holdLists, d => d is Unallocated);
+        if (emptySlotIndex == -1)
+            return;
+
+        _holdLists[emptySlotIndex] = new AutoAllocated(holdPoint);
+        WeakReferenceMessenger.Default.Send(new HoldSlotsUpdatedCommand());
+    }
+
+    void TryFreeAutoAllocatedSlot(string holdPoint)
+    {
+        if (_activeHolds.Any(h => h.HoldPoint == holdPoint))
+            return;
+
+        var slotIndex = Array.FindIndex(_holdLists, d => d is AutoAllocated && d.Matches(holdPoint));
+        if (slotIndex == -1)
+            return;
+
+        _holdLists[slotIndex] = new Unallocated();
+        _windowManager.CloseWindow(WindowKeys.HoldFor(holdPoint));
+        WeakReferenceMessenger.Default.Send(new HoldSlotsUpdatedCommand());
     }
     
     public CustomStripItem? GetCustomStripItem(string itemType, Track track, FDP2.FDR flightDataRecord, RDP.RadarTrack radarTrack)
@@ -300,7 +341,7 @@ public class Plugin
             }
 
             // Try matching to one of the pre-defined hold points
-            var fullPointName = _holdLists.FirstOrDefault(h => h.StartsWith(partialPointName));
+            var fullPointName = GetAllocatedHoldPointNames().FirstOrDefault(name => name.StartsWith(partialPointName));
             if (!string.IsNullOrEmpty(fullPointName))
             {
                 holdPointName = fullPointName;
@@ -649,6 +690,7 @@ public class Plugin
             fdr.GlobalOpData,
             state);
 
+        TryAutoAllocateSlot(holdItem.HoldPoint);
         _activeHolds.Add(holdItem);
         EnsureHoldWindowsAreOpen();
 
@@ -660,6 +702,7 @@ public class Plugin
     void UntrackHold(HoldItem hold)
     {
         _activeHolds.Remove(hold);
+        TryFreeAutoAllocatedSlot(hold.HoldPoint);
         WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
     }
 
@@ -874,16 +917,18 @@ public class Plugin
 
     public void Receive(HoldPointAddedCommand message)
     {
-        if (!_holdLists.Contains(message.PointName))
+        var alreadyAllocated = _holdLists.Any(d => d.Matches(message.PointName));
+
+        if (!alreadyAllocated)
         {
-            _holdLists[message.Index] = message.PointName;
+            _holdLists[message.Index] = new ManuallyAllocated(message.PointName);
         }
 
         WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
 
         // Check if there are any aircraft that should still be in OTHER
         var otherHolds = _activeHolds
-            .Where(h => !HoldLists.Contains(h.HoldPoint) && h.State != HoldItemState.Unconcerned)
+            .Where(h => !GetAllocatedHoldPointNames().Contains(h.HoldPoint) && h.State != HoldItemState.Unconcerned)
             .ToArray();
 
         // Close OTHER window only if no aircraft should be in it
@@ -897,11 +942,11 @@ public class Plugin
 
     public void Receive(HoldPointRemovedCommand message)
     {
-        var index = Array.IndexOf(_holdLists, message.PointName);
+        var index = Array.FindIndex(_holdLists, d => d.Matches(message.PointName));
         if (index == -1)
             return;
 
-        _holdLists[index] = string.Empty;
+        _holdLists[index] = new Unallocated();
 
         // Close the window for this hold point
         _windowManager.CloseWindow(WindowKeys.HoldFor(message.PointName));

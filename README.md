@@ -30,10 +30,11 @@ The hold can be cancelled by removing the details from the Label Data, or by rer
 
 ### Configuring Lists
 
-Up to 4 holding lists can be configured. Click `Tools` > `Hold Setup` and enter the name of each waypoint.
-Each of the configured waypoints will have their own hold list.
+Up to 4 holding lists are available. When a hold is initiated at a waypoint that does not already have a list, one is created automatically. When all holds at that waypoint are removed, the list is freed and the slot becomes available again.
 
-Any aircraft holding at a waypoint not configured with its own hold list will be placed in the `OTHER` list.
+Lists can also be configured manually via `Tools` > `Hold Setup`. Manually configured lists are not freed automatically; they must be cleared via the Hold Setup window.
+
+Any aircraft holding at a waypoint when all 4 lists are already occupied will be placed in the `OTHER` list.
 
 ![All Windows](./all-windows.png)
 
@@ -57,10 +58,3 @@ Ensure you have [vatSys](https://virtualairtrafficsystem.com/) version 1.4.20 or
 
 - The hold entry and exit times are not displayed in the vatSys strip due to limitations with the vatSys SDK
 - Hold data is not extracted from the flight plan, the list will only display when the label data contains hold information.
-
-## Roadmap
-
-- [ ] Basic hold list
-- [ ] Automatically update ETOs
-- [ ] Display hold entry and exit times
-- [ ] Inhibit alerts during hold

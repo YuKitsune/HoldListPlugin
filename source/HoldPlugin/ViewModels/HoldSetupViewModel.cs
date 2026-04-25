@@ -5,23 +5,34 @@ using HoldPlugin.Contracts;
 
 namespace HoldPlugin.ViewModels;
 
-public partial class HoldSetupViewModel : ObservableObject
+public partial class HoldSetupViewModel : ObservableObject, IRecipient<HoldSlotsUpdatedCommand>
 {
     readonly IErrorReporter _errorReporter;
-    
+
     [ObservableProperty] HoldButtonViewModel _button1;
     [ObservableProperty] HoldButtonViewModel _button2;
     [ObservableProperty] HoldButtonViewModel _button3;
     [ObservableProperty] HoldButtonViewModel _button4;
 
-    public HoldSetupViewModel(string[] holds, IErrorReporter errorReporter)
+    public HoldSetupViewModel(IHoldPointDescriptor[] holds, IErrorReporter errorReporter)
     {
         _errorReporter = errorReporter;
 
-        Button1 = new HoldButtonViewModel(0, holds[0], this, _errorReporter);
-        Button2 = new HoldButtonViewModel(1, holds[1], this, _errorReporter);
-        Button3 = new HoldButtonViewModel(2, holds[2], this, _errorReporter);
-        Button4 = new HoldButtonViewModel(3, holds[3], this, _errorReporter);
+        Button1 = new HoldButtonViewModel(0, holds[0].GetHoldPointName() ?? string.Empty, this, _errorReporter);
+        Button2 = new HoldButtonViewModel(1, holds[1].GetHoldPointName() ?? string.Empty, this, _errorReporter);
+        Button3 = new HoldButtonViewModel(2, holds[2].GetHoldPointName() ?? string.Empty, this, _errorReporter);
+        Button4 = new HoldButtonViewModel(3, holds[3].GetHoldPointName() ?? string.Empty, this, _errorReporter);
+
+        WeakReferenceMessenger.Default.Register(this);
+    }
+
+    public void Receive(HoldSlotsUpdatedCommand message)
+    {
+        var descriptors = Plugin.HoldLists.ToArray();
+        Button1.HoldPointName = descriptors[0].GetHoldPointName();
+        Button2.HoldPointName = descriptors[1].GetHoldPointName();
+        Button3.HoldPointName = descriptors[2].GetHoldPointName();
+        Button4.HoldPointName = descriptors[3].GetHoldPointName();
     }
 
     public bool IsHoldPointNameTaken(string pointName, int excludeIndex)
@@ -65,6 +76,8 @@ public partial class HoldSetupViewModel : ObservableObject
         public string DisplayText => string.IsNullOrWhiteSpace(HoldPointName)
             ? "           "
             : HoldPointName;
+
+        partial void OnHoldPointNameChanged(string? value) => OnPropertyChanged(nameof(DisplayText));
 
         [RelayCommand]
         void Edit()

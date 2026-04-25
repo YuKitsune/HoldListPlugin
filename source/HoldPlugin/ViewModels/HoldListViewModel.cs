@@ -113,7 +113,7 @@ public partial class HoldListViewModel : ObservableObject, IRecipient<RefreshHol
                 return false;
             
             if (string.IsNullOrEmpty(HoldPointName))
-                return !Plugin.HoldLists.Contains(item.HoldPoint);
+                return !Plugin.HoldLists.Any(d => d.Matches(item.HoldPoint));
 
             return HoldPointName == item.HoldPoint;
         }
