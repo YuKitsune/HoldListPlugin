@@ -441,6 +441,19 @@ public class Plugin
             _subscribedFDRs[fdr.Callsign] = fdr;
             fdr.PropertyChanged += OnFDRPropertyChanged;
         }
+
+        // Sync hold states in case FDR objects were replaced (e.g. after assuming a tag from NONE,
+        // FDRsChanged fires with a new FDR that already has IsTrackedByMe=true, so no
+        // PropertyChanged transition fires for that property).
+        foreach (var hold in _activeHolds.ToArray())
+        {
+            if (!_subscribedFDRs.TryGetValue(hold.Callsign, out var fdr))
+                continue;
+
+            UpdateHoldItemFromFDR(fdr, hold);
+        }
+
+        WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
     }
 
     /// <summary>
