@@ -331,8 +331,6 @@ public class Plugin
                 continue;
 
             var partialPointName = segments[1];
-            if (partialPointName.Length < 3)
-                continue;
 
             // Parse exit time if present (3rd segment)
             if (segments.Length >= 3 && int.TryParse(segments[2], out var minutes))
@@ -340,22 +338,26 @@ public class Plugin
                 exitTimeMinutes = minutes;
             }
 
-            // Try matching to one of the pre-defined hold points
-            var fullPointName = GetAllocatedHoldPointNames().FirstOrDefault(name => name.StartsWith(partialPointName));
-            if (!string.IsNullOrEmpty(fullPointName))
-            {
-                holdPointName = fullPointName;
-                return true;
-            }
-
-            // Try matching to a point on the route instead
-            var matchingSegment = fdr.ParsedRoute
+            // Try matching to a point on the route
+            
+            var waypoints = fdr.ParsedRoute
                 .Skip(fdr.ParsedRoute.OverflownIndex)
-                .FirstOrDefault(s =>
-                    s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT &&
-                    s.Intersection.Name.StartsWith(partialPointName));
+                .Where(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT)
+                .ToArray();
+            
+            // Search for exact matches first
+            var matchingSegment = waypoints.FirstOrDefault(s => s.Intersection.Name == partialPointName);
+            
+            // No exact match, check for matches against the first 3 chars
+            if (matchingSegment is null && partialPointName.Length >= 3)
+            {
+                matchingSegment = waypoints.FirstOrDefault(s => s.Intersection.Name.StartsWith(partialPointName));
+            }
+            
             if (matchingSegment is null)
+            {
                 continue;
+            }
 
             holdPointName = matchingSegment.Intersection.Name;
             return true;
