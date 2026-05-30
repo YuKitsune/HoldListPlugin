@@ -872,6 +872,26 @@ public class Plugin
                 if (selectedTime >= DateTime.UtcNow)
                 {
                     holdItem.HoldExitTime = selectedTime;
+
+                    // GUI now owns the exit time, so strip it from the label data. This must be
+                    // enqueued before UpdatePETOs: the work queue is FIFO, so the strip runs ahead
+                    // of the re-parse triggered by the PETO/route change. Otherwise that re-parse
+                    // would still see the old exit time in the label and revert the selected time.
+                    _workQueue.Enqueue(async () =>
+                    {
+                        var semaphore = _semaphoreProvider.Get(fdr.Callsign);
+                        await semaphore.WaitAsync();
+
+                        try
+                        {
+                            RemoveExitTimeFromLabel(fdr);
+                        }
+                        finally
+                        {
+                            semaphore.Release();
+                        }
+                    });
+
                     UpdatePETOs(fdr, holdItem);
 
                     System.Diagnostics.Debug.WriteLine(
@@ -884,6 +904,39 @@ public class Plugin
         catch (Exception ex)
         {
             AddError(ex);
+        }
+    }
+
+    /// <summary>
+    ///     Remove the exit time segment from the hold section of the label data, leaving the
+    ///     hold designation and waypoint name (including any shortening) and separators intact.
+    ///     No-op when no exit time segment is present.
+    /// </summary>
+    void RemoveExitTimeFromLabel(FDP2.FDR fdr)
+    {
+        var parts = fdr.LabelOpData.Split(' ');
+        for (var i = 0; i < parts.Length; i++)
+        {
+            var part = parts[i];
+            if (!part.StartsWith("H/") && !part.StartsWith("H\\"))
+                continue;
+
+            // Separator positions within the hold section ('/' or '\')
+            var separatorIndices = new List<int>();
+            for (var c = 0; c < part.Length; c++)
+            {
+                if (part[c] == '/' || part[c] == '\\')
+                    separatorIndices.Add(c);
+            }
+
+            // Only strip when an exit time segment exists (H/RIVET/42)
+            if (separatorIndices.Count < 2)
+                return;
+
+            // Drop the 2nd separator and everything after it (the exit time)
+            parts[i] = part.Substring(0, separatorIndices[1]);
+            fdr.LabelOpData = string.Join(" ", parts);
+            return;
         }
     }
 
