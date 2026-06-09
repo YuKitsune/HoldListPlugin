@@ -339,21 +339,39 @@ public class Plugin
             }
 
             // Try matching to a point on the route
-            
+
             var waypoints = fdr.ParsedRoute
                 .Skip(fdr.ParsedRoute.OverflownIndex)
                 .Where(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT)
                 .ToArray();
-            
+
             // Search for exact matches first
             var matchingSegment = waypoints.FirstOrDefault(s => s.Intersection.Name == partialPointName);
-            
+
             // No exact match, check for matches against the first 3 chars
             if (matchingSegment is null && partialPointName.Length >= 3)
             {
                 matchingSegment = waypoints.FirstOrDefault(s => s.Intersection.Name.StartsWith(partialPointName));
             }
-            
+
+            // The hold point may be the most recently overflown waypoint when the aircraft has just
+            // entered the hold. Check for this before concluding the hold text is invalid.
+            if (matchingSegment is null && fdr.ParsedRoute.OverflownIndex > 0)
+            {
+                var lastOverflownIdx = fdr.ParsedRoute
+                    .GetRange(0, fdr.ParsedRoute.OverflownIndex + 1)
+                    .FindLastIndex(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT);
+                if (lastOverflownIdx >= 0)
+                {
+                    var lastOverflown = fdr.ParsedRoute[lastOverflownIdx];
+                    if (lastOverflown.Intersection.Name == partialPointName ||
+                        (partialPointName.Length >= 3 && lastOverflown.Intersection.Name.StartsWith(partialPointName)))
+                    {
+                        matchingSegment = lastOverflown;
+                    }
+                }
+            }
+
             if (matchingSegment is null)
             {
                 continue;
@@ -378,6 +396,22 @@ public class Plugin
         holdSegment = fdr.ParsedRoute
             .Skip(fdr.ParsedRoute.OverflownIndex)
             .FirstOrDefault(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT && s.Intersection.Name == holdItem.HoldPoint);
+
+        // The hold point may be the most recently overflown waypoint when the aircraft has just
+        // entered the hold.
+        if (holdSegment is null && fdr.ParsedRoute.OverflownIndex > 0)
+        {
+            var lastOverflownIdx = fdr.ParsedRoute
+                .GetRange(0, fdr.ParsedRoute.OverflownIndex + 1)
+                .FindLastIndex(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT);
+            if (lastOverflownIdx >= 0)
+            {
+                var candidate = fdr.ParsedRoute[lastOverflownIdx];
+                if (candidate.Intersection.Name == holdItem.HoldPoint)
+                    holdSegment = candidate;
+            }
+        }
+
         if (holdSegment is null)
             return false;
         
