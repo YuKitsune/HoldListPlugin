@@ -573,23 +573,14 @@ public class Plugin
 
     void InitiateHold(FDP2.FDR fdr, string holdPointPrefix, int? exitTimeMinutes)
     {
-        var holdEntryPoint = fdr.ParsedRoute
-            .Skip(fdr.ParsedRoute.OverflownIndex)
-            .FirstOrDefault(s => s.Intersection.Name.StartsWith(holdPointPrefix));
-        if (holdEntryPoint is null)
-            return;
-        
-        var holdExitTime = exitTimeMinutes.HasValue
-            ? CalculateExitTime(exitTimeMinutes.Value)
-            : holdEntryPoint.ETO.Add(TimeSpan.FromMinutes(10));
-        
-        var holdSegment = fdr.ParsedRoute
-            .Skip(fdr.ParsedRoute.OverflownIndex)
-            .FirstOrDefault(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT && s.Intersection.Name.StartsWith(holdPointPrefix));
-
+        var holdSegment = FindHoldWaypoint(fdr, holdPointPrefix);
         if (holdSegment is null)
             return;
-        
+
+        var holdExitTime = exitTimeMinutes.HasValue
+            ? CalculateExitTime(exitTimeMinutes.Value)
+            : holdSegment.ETO.Add(TimeSpan.FromMinutes(10));
+
         var holdIndex = fdr.ParsedRoute.IndexOf(holdSegment);
         var nextSegment = fdr.ParsedRoute
             .Skip(holdIndex + 1)
@@ -597,9 +588,41 @@ public class Plugin
 
         if (nextSegment is null)
             return;
-        
+
         var holdItem = CreateHoldItem(fdr, holdSegment, nextSegment, holdExitTime);
         UpdatePETOs(fdr, holdItem);
+    }
+
+    // Find the hold-point waypoint on the route, falling back to the most recently overflown
+    // waypoint when the hold point has already been passed (e.g. aircraft is established in the
+    // hold, or a handoff is accepted after overflight).
+    static FDP2.FDR.ExtractedRoute.Segment? FindHoldWaypoint(FDP2.FDR fdr, string holdPointPrefix)
+    {
+        var waypoints = fdr.ParsedRoute
+            .Skip(fdr.ParsedRoute.OverflownIndex)
+            .Where(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT)
+            .ToArray();
+
+        var match = waypoints.FirstOrDefault(s => s.Intersection.Name == holdPointPrefix);
+
+        if (match is null && holdPointPrefix.Length >= 3)
+            match = waypoints.FirstOrDefault(s => s.Intersection.Name.StartsWith(holdPointPrefix));
+
+        if (match is not null || fdr.ParsedRoute.OverflownIndex <= 0)
+            return match;
+
+        var lastOverflownIdx = fdr.ParsedRoute
+            .GetRange(0, fdr.ParsedRoute.OverflownIndex + 1)
+            .FindLastIndex(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT);
+        if (lastOverflownIdx < 0)
+            return null;
+
+        var lastOverflown = fdr.ParsedRoute[lastOverflownIdx];
+        if (lastOverflown.Intersection.Name == holdPointPrefix ||
+            (holdPointPrefix.Length >= 3 && lastOverflown.Intersection.Name.StartsWith(holdPointPrefix)))
+            return lastOverflown;
+
+        return null;
     }
 
     // void SyncInitiateHold(FDP2.FDR fdr, FDP2.FDR.ExtractedRoute.Segment holdExitSegment)
