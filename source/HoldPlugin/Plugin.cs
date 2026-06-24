@@ -478,15 +478,25 @@ public class Plugin
             fdr.PropertyChanged += OnFDRPropertyChanged;
         }
 
-        // Sync hold states in case FDR objects were replaced (e.g. after assuming a tag from NONE,
-        // FDRsChanged fires with a new FDR that already has IsTrackedByMe=true, so no
-        // PropertyChanged transition fires for that property).
-        foreach (var hold in _activeHolds.ToArray())
+        // Sync hold states in case FDR objects were replaced (e.g. after assuming a tag from NONE
+        // or accepting a handoff, FDRsChanged fires with a new FDR that already has
+        // IsTrackedByMe=true, so no PropertyChanged transition fires for that property).
+        foreach (var fdr in _subscribedFDRs.Values.ToArray())
         {
-            if (!_subscribedFDRs.TryGetValue(hold.Callsign, out var fdr))
+            var existingHold = _activeHolds.FirstOrDefault(h => h.Callsign == fdr.Callsign);
+            if (existingHold is not null)
+            {
+                UpdateHoldItemFromFDR(fdr, existingHold);
+                continue;
+            }
+
+            if (GetHoldItemState(fdr) == HoldItemState.Unconcerned)
                 continue;
 
-            UpdateHoldItemFromFDR(fdr, hold);
+            if (!TryParseHoldPointFromLabelOpData(fdr, out var holdPointPrefix, out var exitTimeMinutes))
+                continue;
+
+            InitiateHold(fdr, holdPointPrefix, exitTimeMinutes);
         }
 
         WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
@@ -552,7 +562,7 @@ public class Plugin
                 }
                 else
                 {
-                    if (hasHoldText && fdr.IsTrackedByMe)
+                    if (hasHoldText && GetHoldItemState(fdr) != HoldItemState.Unconcerned)
                     {
                         InitiateHold(fdr, holdPointPrefix, exitTimeMinutes);
                     }
@@ -573,23 +583,14 @@ public class Plugin
 
     void InitiateHold(FDP2.FDR fdr, string holdPointPrefix, int? exitTimeMinutes)
     {
-        var holdEntryPoint = fdr.ParsedRoute
-            .Skip(fdr.ParsedRoute.OverflownIndex)
-            .FirstOrDefault(s => s.Intersection.Name.StartsWith(holdPointPrefix));
-        if (holdEntryPoint is null)
-            return;
-        
-        var holdExitTime = exitTimeMinutes.HasValue
-            ? CalculateExitTime(exitTimeMinutes.Value)
-            : holdEntryPoint.ETO.Add(TimeSpan.FromMinutes(10));
-        
-        var holdSegment = fdr.ParsedRoute
-            .Skip(fdr.ParsedRoute.OverflownIndex)
-            .FirstOrDefault(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT && s.Intersection.Name.StartsWith(holdPointPrefix));
-
+        var holdSegment = FindHoldWaypoint(fdr, holdPointPrefix);
         if (holdSegment is null)
             return;
-        
+
+        var holdExitTime = exitTimeMinutes.HasValue
+            ? CalculateExitTime(exitTimeMinutes.Value)
+            : holdSegment.ETO.Add(TimeSpan.FromMinutes(10));
+
         var holdIndex = fdr.ParsedRoute.IndexOf(holdSegment);
         var nextSegment = fdr.ParsedRoute
             .Skip(holdIndex + 1)
@@ -597,9 +598,41 @@ public class Plugin
 
         if (nextSegment is null)
             return;
-        
+
         var holdItem = CreateHoldItem(fdr, holdSegment, nextSegment, holdExitTime);
         UpdatePETOs(fdr, holdItem);
+    }
+
+    // Find the hold-point waypoint on the route, falling back to the most recently overflown
+    // waypoint when the hold point has already been passed (e.g. aircraft is established in the
+    // hold, or a handoff is accepted after overflight).
+    static FDP2.FDR.ExtractedRoute.Segment? FindHoldWaypoint(FDP2.FDR fdr, string holdPointPrefix)
+    {
+        var waypoints = fdr.ParsedRoute
+            .Skip(fdr.ParsedRoute.OverflownIndex)
+            .Where(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT)
+            .ToArray();
+
+        var match = waypoints.FirstOrDefault(s => s.Intersection.Name == holdPointPrefix);
+
+        if (match is null && holdPointPrefix.Length >= 3)
+            match = waypoints.FirstOrDefault(s => s.Intersection.Name.StartsWith(holdPointPrefix));
+
+        if (match is not null || fdr.ParsedRoute.OverflownIndex <= 0)
+            return match;
+
+        var lastOverflownIdx = fdr.ParsedRoute
+            .GetRange(0, fdr.ParsedRoute.OverflownIndex + 1)
+            .FindLastIndex(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT);
+        if (lastOverflownIdx < 0)
+            return null;
+
+        var lastOverflown = fdr.ParsedRoute[lastOverflownIdx];
+        if (lastOverflown.Intersection.Name == holdPointPrefix ||
+            (holdPointPrefix.Length >= 3 && lastOverflown.Intersection.Name.StartsWith(holdPointPrefix)))
+            return lastOverflown;
+
+        return null;
     }
 
     // void SyncInitiateHold(FDP2.FDR fdr, FDP2.FDR.ExtractedRoute.Segment holdExitSegment)
@@ -668,18 +701,34 @@ public class Plugin
             ? new ClearedFlightLevel(fdr.CFLUpper)
             : new ClearedBlockLevel(fdr.CFLLower, fdr.CFLUpper);
 
-        HoldItemState state;
-        if (fdr.IsHandoff || (fdr.IsTrackedByMe && fdr.HandoffController is not null))
-            state = HoldItemState.Handover;
-        else if (fdr.IsTrackedByMe)
-            state = HoldItemState.Jurisdiction;
-        else
-            state = HoldItemState.Unconcerned;
-
         hold.ClearedFlightLevel = clearedFlightLevel;
         hold.RvsmApproved = fdr.RVSM;
         hold.GlobalOps = fdr.GlobalOpData;
-        hold.State = state;
+        hold.State = GetHoldItemState(fdr);
+
+        // ATO is only populated once the aircraft overflies the hold point, which may happen
+        // after the hold item was created. Re-read it so the entry time reflects the actual
+        // overflight time once available.
+        if (TryFindHoldSegments(fdr, hold, out var holdSegment, out _) && holdSegment!.ATO != default)
+            hold.HoldEntryTime = holdSegment.ATO;
+    }
+
+    // FDR property flags don't cleanly distinguish jurisdiction from incoming/outgoing handoff
+    // after acceptance (HandoffController can linger), so we derive state from the track's HMI
+    // state instead. Tracks may not exist for every FDR; treat missing tracks as Unconcerned.
+    static HoldItemState GetHoldItemState(FDP2.FDR fdr)
+    {
+        var track = MMI.FindTrack(fdr);
+        if (track is null)
+            return HoldItemState.Unconcerned;
+
+        return track.State switch
+        {
+            MMI.HMIStates.Jurisdiction => HoldItemState.Jurisdiction,
+            MMI.HMIStates.HandoverIn => HoldItemState.Handover,
+            MMI.HMIStates.HandoverOut => HoldItemState.Handover,
+            _ => HoldItemState.Unconcerned
+        };
     }
 
     DateTime CalculateExitTime(int exitTimeMinutes)
@@ -716,13 +765,7 @@ public class Plugin
             ? new ClearedFlightLevel(fdr.CFLUpper)
             : new ClearedBlockLevel(fdr.CFLLower, fdr.CFLUpper);
 
-        HoldItemState state;
-        if (fdr.IsHandoff || (fdr.IsTrackedByMe && fdr.HandoffController is not null))
-            state = HoldItemState.Handover;
-        else if (fdr.IsTrackedByMe)
-            state = HoldItemState.Jurisdiction;
-        else
-            state = HoldItemState.Unconcerned;
+        var state = GetHoldItemState(fdr);
 
         var timeToNextWaypoint = nextSegment.ETO - holdSegment.ETO;
         
