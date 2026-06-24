@@ -490,7 +490,7 @@ public class Plugin
                 continue;
             }
 
-            if (!fdr.IsTrackedByMe && !fdr.IsHandoff)
+            if (GetHoldItemState(fdr) == HoldItemState.Unconcerned)
                 continue;
 
             if (!TryParseHoldPointFromLabelOpData(fdr, out var holdPointPrefix, out var exitTimeMinutes))
@@ -562,7 +562,7 @@ public class Plugin
                 }
                 else
                 {
-                    if (hasHoldText && (fdr.IsTrackedByMe || fdr.IsHandoff))
+                    if (hasHoldText && GetHoldItemState(fdr) != HoldItemState.Unconcerned)
                     {
                         InitiateHold(fdr, holdPointPrefix, exitTimeMinutes);
                     }
@@ -701,24 +701,34 @@ public class Plugin
             ? new ClearedFlightLevel(fdr.CFLUpper)
             : new ClearedBlockLevel(fdr.CFLLower, fdr.CFLUpper);
 
-        HoldItemState state;
-        if (fdr.IsHandoff || (fdr.IsTrackedByMe && fdr.HandoffController is not null))
-            state = HoldItemState.Handover;
-        else if (fdr.IsTrackedByMe)
-            state = HoldItemState.Jurisdiction;
-        else
-            state = HoldItemState.Unconcerned;
-
         hold.ClearedFlightLevel = clearedFlightLevel;
         hold.RvsmApproved = fdr.RVSM;
         hold.GlobalOps = fdr.GlobalOpData;
-        hold.State = state;
+        hold.State = GetHoldItemState(fdr);
 
         // ATO is only populated once the aircraft overflies the hold point, which may happen
         // after the hold item was created. Re-read it so the entry time reflects the actual
         // overflight time once available.
         if (TryFindHoldSegments(fdr, hold, out var holdSegment, out _) && holdSegment!.ATO != default)
             hold.HoldEntryTime = holdSegment.ATO;
+    }
+
+    // FDR property flags don't cleanly distinguish jurisdiction from incoming/outgoing handoff
+    // after acceptance (HandoffController can linger), so we derive state from the track's HMI
+    // state instead. Tracks may not exist for every FDR; treat missing tracks as Unconcerned.
+    static HoldItemState GetHoldItemState(FDP2.FDR fdr)
+    {
+        var track = MMI.FindTrack(fdr);
+        if (track is null)
+            return HoldItemState.Unconcerned;
+
+        return track.State switch
+        {
+            MMI.HMIStates.Jurisdiction => HoldItemState.Jurisdiction,
+            MMI.HMIStates.HandoverIn => HoldItemState.Handover,
+            MMI.HMIStates.HandoverOut => HoldItemState.Handover,
+            _ => HoldItemState.Unconcerned
+        };
     }
 
     DateTime CalculateExitTime(int exitTimeMinutes)
@@ -755,13 +765,7 @@ public class Plugin
             ? new ClearedFlightLevel(fdr.CFLUpper)
             : new ClearedBlockLevel(fdr.CFLLower, fdr.CFLUpper);
 
-        HoldItemState state;
-        if (fdr.IsHandoff || (fdr.IsTrackedByMe && fdr.HandoffController is not null))
-            state = HoldItemState.Handover;
-        else if (fdr.IsTrackedByMe)
-            state = HoldItemState.Jurisdiction;
-        else
-            state = HoldItemState.Unconcerned;
+        var state = GetHoldItemState(fdr);
 
         var timeToNextWaypoint = nextSegment.ETO - holdSegment.ETO;
         
