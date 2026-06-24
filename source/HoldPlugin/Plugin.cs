@@ -490,7 +490,7 @@ public class Plugin
                 continue;
             }
 
-            if (!fdr.IsTrackedByMe)
+            if (!fdr.IsTrackedByMe && !fdr.IsHandoff)
                 continue;
 
             if (!TryParseHoldPointFromLabelOpData(fdr, out var holdPointPrefix, out var exitTimeMinutes))
@@ -562,7 +562,7 @@ public class Plugin
                 }
                 else
                 {
-                    if (hasHoldText && fdr.IsTrackedByMe)
+                    if (hasHoldText && (fdr.IsTrackedByMe || fdr.IsHandoff))
                     {
                         InitiateHold(fdr, holdPointPrefix, exitTimeMinutes);
                     }
