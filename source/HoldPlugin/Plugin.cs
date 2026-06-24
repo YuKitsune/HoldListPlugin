@@ -713,6 +713,12 @@ public class Plugin
         hold.RvsmApproved = fdr.RVSM;
         hold.GlobalOps = fdr.GlobalOpData;
         hold.State = state;
+
+        // ATO is only populated once the aircraft overflies the hold point, which may happen
+        // after the hold item was created. Re-read it so the entry time reflects the actual
+        // overflight time once available.
+        if (TryFindHoldSegments(fdr, hold, out var holdSegment, out _) && holdSegment!.ATO != default)
+            hold.HoldEntryTime = holdSegment.ATO;
     }
 
     DateTime CalculateExitTime(int exitTimeMinutes)
