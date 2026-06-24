@@ -478,15 +478,25 @@ public class Plugin
             fdr.PropertyChanged += OnFDRPropertyChanged;
         }
 
-        // Sync hold states in case FDR objects were replaced (e.g. after assuming a tag from NONE,
-        // FDRsChanged fires with a new FDR that already has IsTrackedByMe=true, so no
-        // PropertyChanged transition fires for that property).
-        foreach (var hold in _activeHolds.ToArray())
+        // Sync hold states in case FDR objects were replaced (e.g. after assuming a tag from NONE
+        // or accepting a handoff, FDRsChanged fires with a new FDR that already has
+        // IsTrackedByMe=true, so no PropertyChanged transition fires for that property).
+        foreach (var fdr in _subscribedFDRs.Values.ToArray())
         {
-            if (!_subscribedFDRs.TryGetValue(hold.Callsign, out var fdr))
+            var existingHold = _activeHolds.FirstOrDefault(h => h.Callsign == fdr.Callsign);
+            if (existingHold is not null)
+            {
+                UpdateHoldItemFromFDR(fdr, existingHold);
+                continue;
+            }
+
+            if (!fdr.IsTrackedByMe)
                 continue;
 
-            UpdateHoldItemFromFDR(fdr, hold);
+            if (!TryParseHoldPointFromLabelOpData(fdr, out var holdPointPrefix, out var exitTimeMinutes))
+                continue;
+
+            InitiateHold(fdr, holdPointPrefix, exitTimeMinutes);
         }
 
         WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
