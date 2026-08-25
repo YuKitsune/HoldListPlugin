@@ -32,7 +32,7 @@ When a block clearance has been issued, the CFL is displayed as `xxxByyy`, where
 
 An `X` will be displayed if the aircraft is non-RVSM.
 
-The hold exit time is displayed in the label, and can be adjusted by clicking on it and selecting a new exit time, or cleared by middle-clicking it.
+The hold entry and exit times are displayed in the label. The exit can be adjusted by clicking on it to select a new exit time, or cleared by middle-clicking it.
 
 The `OP_DATA` can also be viewed and edited from the hold label.
 
