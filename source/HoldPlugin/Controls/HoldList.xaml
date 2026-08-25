@@ -70,10 +70,8 @@
                                         Width="16"
                                         Height="16"
                                         BorderBrush="{Binding State, Converter={StaticResource HoldItemStateToColorConverter}}"
-                                        BorderThickness="2">
-                                    <Border.InputBindings>
-                                        <MouseBinding MouseAction="LeftClick" Command="{Binding DesignateAircraftCommand}"/>
-                                    </Border.InputBindings>
+                                        BorderThickness="2"
+                                        MouseLeftButtonUp="Designator_MouseLeftButtonUp">
                                     <Border.Style>
                                         <Style TargetType="Border">
                                             <Setter Property="Background" Value="Transparent"/>
@@ -92,26 +90,19 @@
                                            Text="{Binding DisplayAircraftId}"
                                            Foreground="{Binding State, Converter={StaticResource HoldItemStateToColorConverter}}"
                                            Padding="8,0,0,0"
-                                           Background="Transparent">
-                                    <TextBlock.InputBindings>
-                                        <MouseBinding MouseAction="MiddleClick" Command="{Binding CancelHoldCommand}"/>
-                                    </TextBlock.InputBindings>
-                                </TextBlock>
+                                           Background="Transparent"
+                                           MouseDown="Acid_MouseDown"/>
                                 
                                 <!-- Level -->
                                 <TextBlock Grid.Column="2" Text="{Binding DisplayLevel}" Foreground="{x:Static local:Theme.StripTextColor}" Padding="16,0,0,0"/>
                                 
                                 <!-- CFL -->
-                                <!-- TODO: Left-click opens the CFL menu -->
                                 <TextBlock Grid.Column="3"
                                            Text="{Binding DisplayClearedLevel}"
                                            Foreground="{Binding State, Converter={StaticResource HoldItemStateToColorConverter}}"
                                            Padding="16,0,0,0"
-                                           Background="Transparent">
-                                    <TextBlock.InputBindings>
-                                        <MouseBinding MouseAction="LeftClick" Command="{Binding OpenClearedLevelMenuCommand}"/>
-                                    </TextBlock.InputBindings>
-                                </TextBlock>
+                                           Background="Transparent"
+                                           MouseLeftButtonUp="ClearedLevel_MouseLeftButtonUp"/>
                                 
                                 <!-- RVSM indicator -->
                                 <TextBlock Grid.Column="4" Text="X" Foreground="{Binding State, Converter={StaticResource HoldItemStateToColorConverter}}" Padding="8,0,0,0" Visibility="{Binding RvsmApproved, Converter={StaticResource InvertedBoolToHiddenConverter}}"/>
@@ -123,11 +114,10 @@
                             <Border Grid.Column="1" BorderBrush="{x:Static local:Theme.StripTextColor}" BorderThickness="2,0,2,0" Padding="4">
                                 
                                 <!-- Hold Departure Time -->
-                                <TextBlock Text="{Binding DisplayHoldExitTime}" Foreground="{x:Static local:Theme.StripTextColor}">
-                                    <TextBlock.InputBindings>
-                                        <MouseBinding MouseAction="LeftClick" Command="{Binding OpenHoldExitMenuCommand}"/>
-                                    </TextBlock.InputBindings>
-                                </TextBlock>
+                                <TextBlock Text="{Binding DisplayHoldExitTime}"
+                                           Foreground="{x:Static local:Theme.StripTextColor}"
+                                           Background="Transparent"
+                                           MouseLeftButtonUp="HoldExit_MouseLeftButtonUp"/>
                             </Border>
 
                             <Border Grid.Column="2" Margin="4">
@@ -136,10 +126,8 @@
                                     <!-- Display mode -->
                                     <TextBlock Text="{Binding DisplayGlobalOps}"
                                                Foreground="{x:Static local:Theme.StripTextColor}"
-                                               Background="Transparent">
-                                        <TextBlock.InputBindings>
-                                            <MouseBinding MouseAction="LeftClick" Command="{Binding EditGlobalOpsCommand}"/>
-                                        </TextBlock.InputBindings>
+                                               Background="Transparent"
+                                               MouseLeftButtonUp="GlobalOps_MouseLeftButtonUp">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Style.Triggers>
