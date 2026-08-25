@@ -1,5 +1,6 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using HoldPlugin.ViewModels;
 
 namespace HoldPlugin.Controls;
@@ -12,11 +13,62 @@ public partial class HoldList : UserControl
         DataContext = viewModel;
     }
 
+    // Raw mouse events replace MouseBinding here because WPF's default
+    // MouseGesture requires ModifierKeys.None, so clicks were ignored while
+    // a modifier PTT key was held.
+    void Designator_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: HoldItemViewModel viewModel })
+            return;
+
+        viewModel.DesignateAircraftCommand.Execute(null);
+        e.Handled = true;
+    }
+
+    void Acid_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Middle)
+            return;
+
+        if (sender is not FrameworkElement { DataContext: HoldItemViewModel viewModel })
+            return;
+
+        viewModel.CancelHoldCommand.Execute(null);
+        e.Handled = true;
+    }
+
+    void ClearedLevel_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: HoldItemViewModel viewModel })
+            return;
+
+        viewModel.OpenClearedLevelMenuCommand.Execute(null);
+        e.Handled = true;
+    }
+
+    void HoldExit_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: HoldItemViewModel viewModel })
+            return;
+
+        viewModel.OpenHoldExitMenuCommand.Execute(null);
+        e.Handled = true;
+    }
+
+    void GlobalOps_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: HoldItemViewModel viewModel })
+            return;
+
+        viewModel.EditGlobalOpsCommand.Execute(null);
+        e.Handled = true;
+    }
+
     void GlobalOpsTextBox_LostFocus(object sender, RoutedEventArgs e)
     {
         if (sender is not TextBox { DataContext: HoldItemViewModel viewModel })
             return;
-        
+
         viewModel.CommitGlobalOpsEditCommand.Execute(null);
     }
 
@@ -29,7 +81,7 @@ public partial class HoldList : UserControl
         textBox.SelectAll();
     }
 
-    void GlobalOpsTextBox_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    void GlobalOpsTextBox_MouseLeave(object sender, MouseEventArgs e)
     {
         if (sender is not TextBox { DataContext: HoldItemViewModel viewModel })
             return;
