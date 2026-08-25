@@ -20,7 +20,7 @@ namespace HoldPlugin;
 
 [Export(typeof(IPlugin))]
 public class Plugin
-    : IStripPlugin,
+    : IPlugin,
     IRecipient<DesignateAircraftCommand>,
     IRecipient<CancelHoldCommand>,
     IRecipient<OpenClearedLevelMenuCommand>,
@@ -215,74 +215,6 @@ public class Plugin
         _windowManager.CloseWindow(WindowKeys.HoldFor(holdPoint));
         WeakReferenceMessenger.Default.Send(new HoldSlotsUpdatedCommand());
     }
-    
-    public CustomStripItem? GetCustomStripItem(string itemType, Track track, FDP2.FDR flightDataRecord, RDP.RadarTrack radarTrack)
-    {
-        if (!itemType.StartsWith(HoldIndicatorStripItemTypePrefix))
-            return null;
-        
-        var parts = itemType.Split('_');
-        var indexStr = parts.Last();
-        var index = int.Parse(indexStr);
-        return GetHoldIndicatorStripItem(flightDataRecord, index);
-    }
-
-    CustomStripItem? GetHoldIndicatorStripItem(FDP2.FDR flightDataRecord, int index)
-    {
-        try
-        {
-            var holdInfo = _activeHolds.FirstOrDefault(h => h.Callsign == flightDataRecord.Callsign);
-            if (holdInfo is null)
-                return null;
-
-            if (!TryFindHoldSegments(flightDataRecord, holdInfo, out var entrySegment, out var exitSegment))
-                return null;
-
-            var entryIndex = flightDataRecord.ParsedRoute.IndexOf(entrySegment);
-            var exitIndex = flightDataRecord.ParsedRoute.IndexOf(exitSegment);
-
-            FDP2.FDR.ExtractedRoute.Segment[] route;
-            var overflownIndex = flightDataRecord.ParsedRoute.OverflownIndex;
-            if (overflownIndex > 0)
-            {
-                var lastIndex = flightDataRecord.ParsedRoute.GetRange(0, overflownIndex + 1).FindLastIndex(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT);
-                route = flightDataRecord.ParsedRoute.Skip(lastIndex > 0 ? lastIndex : 0).Where(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT).ToArray();
-            }
-            else
-            {
-                route = flightDataRecord.ParsedRoute.Where(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT).ToArray();
-            }
-
-            if (index >= route.Length)
-                return null;
-
-            var point = route[index];
-            var pointIndex = flightDataRecord.ParsedRoute.IndexOf(point);
-
-            if (pointIndex == entryIndex)
-            {
-                return new CustomStripItem
-                {
-                    Text = "A"
-                };
-            }
-
-            if (pointIndex == exitIndex)
-            {
-                return new CustomStripItem
-                {
-                    Text = "D"
-                };
-            }
-
-            return null;
-        }
-        catch (Exception ex)
-        {
-            AddError(ex);
-            return null;
-        }
-    }
 
     public void OnFDRUpdate(FDP2.FDR updated)
     {
@@ -385,14 +317,12 @@ public class Plugin
         return false;
     }
 
-    bool TryFindHoldSegments(
+    bool TryFindHoldSegment(
         FDP2.FDR fdr,
         HoldItem holdItem,
-        out FDP2.FDR.ExtractedRoute.Segment? holdSegment,
-        out FDP2.FDR.ExtractedRoute.Segment? nextSegment)
+        out FDP2.FDR.ExtractedRoute.Segment? holdSegment)
     {
         holdSegment = null;
-        nextSegment = null;
 
         holdSegment = fdr.ParsedRoute
             .Skip(fdr.ParsedRoute.OverflownIndex)
@@ -413,17 +343,7 @@ public class Plugin
             }
         }
 
-        if (holdSegment is null)
-            return false;
-        
-        var holdIndex = fdr.ParsedRoute.IndexOf(holdSegment);
-        nextSegment = fdr.ParsedRoute
-            .Skip(holdIndex + 1)
-            .FirstOrDefault(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT);
-        if (nextSegment is null)
-            return false;
-
-        return true;
+        return holdSegment is not null;
     }
 
     void OnSelectedTrackChanged(object? sender, EventArgs e)
@@ -647,7 +567,7 @@ public class Plugin
         // ATO is only populated once the aircraft overflies the hold point, which may happen
         // after the hold item was created. Re-read it so the entry time reflects the actual
         // overflight time once available.
-        if (TryFindHoldSegments(fdr, hold, out var holdSegment, out _) && holdSegment!.ATO != default)
+        if (TryFindHoldSegment(fdr, hold, out var holdSegment) && holdSegment!.ATO != default)
             hold.HoldEntryTime = holdSegment.ATO;
     }
 
