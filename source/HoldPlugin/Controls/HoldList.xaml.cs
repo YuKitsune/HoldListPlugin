@@ -13,9 +13,6 @@ public partial class HoldList : UserControl
         DataContext = viewModel;
     }
 
-    // Raw mouse events replace MouseBinding here because WPF's default
-    // MouseGesture requires ModifierKeys.None, so clicks were ignored while
-    // a modifier PTT key was held.
     void Designator_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: HoldItemViewModel viewModel })
