@@ -117,7 +117,8 @@
                                 <TextBlock Text="{Binding DisplayHoldExitTime}"
                                            Foreground="{x:Static local:Theme.StripTextColor}"
                                            Background="Transparent"
-                                           MouseLeftButtonUp="HoldExit_MouseLeftButtonUp"/>
+                                           MouseLeftButtonUp="HoldExit_MouseLeftButtonUp"
+                                           MouseDown="HoldExit_MouseDown"/>
                             </Border>
 
                             <Border Grid.Column="2" Margin="4">

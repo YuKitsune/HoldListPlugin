@@ -1,4 +1,4 @@
-﻿using HoldPlugin.ViewModels;
+using HoldPlugin.ViewModels;
 
 namespace HoldPlugin;
 
@@ -7,8 +7,7 @@ public class HoldItem
     public string Callsign { get; set; }
     public string HoldPoint { get; set; }
     public DateTime HoldEntryTime { get; set; }
-    public DateTime HoldExitTime { get; set; }
-    public TimeSpan TimeToNextWaypoint { get; set; }
+    public DateTime? HoldExitTime { get; set; }
     public bool IsDesignated { get; set; }
     public int Level { get; set; }
     public IClearedFlightLevel ClearedFlightLevel { get; set; }
@@ -20,8 +19,7 @@ public class HoldItem
         string callsign,
         string holdPoint,
         DateTime holdEntryTime,
-        DateTime holdExitTime,
-        TimeSpan timeToNextWaypoint,
+        DateTime? holdExitTime,
         bool isDesignated,
         int level,
         IClearedFlightLevel clearedFlightLevel,
@@ -33,7 +31,6 @@ public class HoldItem
         HoldPoint = holdPoint;
         HoldEntryTime = holdEntryTime;
         HoldExitTime = holdExitTime;
-        TimeToNextWaypoint = timeToNextWaypoint;
         IsDesignated = isDesignated;
         Level = level;
         ClearedFlightLevel = clearedFlightLevel;

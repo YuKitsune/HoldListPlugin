@@ -1,6 +1,5 @@
 ﻿using System.ComponentModel.Composition;
 using System.Diagnostics;
-using System.Reflection;
 using System.Windows;
 using System.Windows.Forms;
 using CommunityToolkit.Mvvm.Messaging;
@@ -21,11 +20,12 @@ namespace HoldPlugin;
 
 [Export(typeof(IPlugin))]
 public class Plugin
-    : IStripPlugin,
+    : IPlugin,
     IRecipient<DesignateAircraftCommand>,
     IRecipient<CancelHoldCommand>,
     IRecipient<OpenClearedLevelMenuCommand>,
     IRecipient<OpenHoldExitMenuCommand>,
+    IRecipient<ClearHoldExitTimeCommand>,
     IRecipient<ChangeGlobalOpsCommand>,
     IRecipient<RemoveHoldItemCommand>,
     IRecipient<HoldPointAddedCommand>,
@@ -74,6 +74,7 @@ public class Plugin
         WeakReferenceMessenger.Default.Register<CancelHoldCommand>(this);
         WeakReferenceMessenger.Default.Register<OpenClearedLevelMenuCommand>(this);
         WeakReferenceMessenger.Default.Register<OpenHoldExitMenuCommand>(this);
+        WeakReferenceMessenger.Default.Register<ClearHoldExitTimeCommand>(this);
         WeakReferenceMessenger.Default.Register<ChangeGlobalOpsCommand>(this);
         WeakReferenceMessenger.Default.Register<RemoveHoldItemCommand>(this);
         WeakReferenceMessenger.Default.Register<HoldPointAddedCommand>(this);
@@ -214,74 +215,6 @@ public class Plugin
         _windowManager.CloseWindow(WindowKeys.HoldFor(holdPoint));
         WeakReferenceMessenger.Default.Send(new HoldSlotsUpdatedCommand());
     }
-    
-    public CustomStripItem? GetCustomStripItem(string itemType, Track track, FDP2.FDR flightDataRecord, RDP.RadarTrack radarTrack)
-    {
-        if (!itemType.StartsWith(HoldIndicatorStripItemTypePrefix))
-            return null;
-        
-        var parts = itemType.Split('_');
-        var indexStr = parts.Last();
-        var index = int.Parse(indexStr);
-        return GetHoldIndicatorStripItem(flightDataRecord, index);
-    }
-
-    CustomStripItem? GetHoldIndicatorStripItem(FDP2.FDR flightDataRecord, int index)
-    {
-        try
-        {
-            var holdInfo = _activeHolds.FirstOrDefault(h => h.Callsign == flightDataRecord.Callsign);
-            if (holdInfo is null)
-                return null;
-
-            if (!TryFindHoldSegments(flightDataRecord, holdInfo, out var entrySegment, out var exitSegment))
-                return null;
-
-            var entryIndex = flightDataRecord.ParsedRoute.IndexOf(entrySegment);
-            var exitIndex = flightDataRecord.ParsedRoute.IndexOf(exitSegment);
-
-            FDP2.FDR.ExtractedRoute.Segment[] route;
-            var overflownIndex = flightDataRecord.ParsedRoute.OverflownIndex;
-            if (overflownIndex > 0)
-            {
-                var lastIndex = flightDataRecord.ParsedRoute.GetRange(0, overflownIndex + 1).FindLastIndex(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT);
-                route = flightDataRecord.ParsedRoute.Skip(lastIndex > 0 ? lastIndex : 0).Where(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT).ToArray();
-            }
-            else
-            {
-                route = flightDataRecord.ParsedRoute.Where(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT).ToArray();
-            }
-
-            if (index >= route.Length)
-                return null;
-
-            var point = route[index];
-            var pointIndex = flightDataRecord.ParsedRoute.IndexOf(point);
-
-            if (pointIndex == entryIndex)
-            {
-                return new CustomStripItem
-                {
-                    Text = "A"
-                };
-            }
-
-            if (pointIndex == exitIndex)
-            {
-                return new CustomStripItem
-                {
-                    Text = "D"
-                };
-            }
-
-            return null;
-        }
-        catch (Exception ex)
-        {
-            AddError(ex);
-            return null;
-        }
-    }
 
     public void OnFDRUpdate(FDP2.FDR updated)
     {
@@ -384,14 +317,12 @@ public class Plugin
         return false;
     }
 
-    bool TryFindHoldSegments(
+    bool TryFindHoldSegment(
         FDP2.FDR fdr,
         HoldItem holdItem,
-        out FDP2.FDR.ExtractedRoute.Segment? holdSegment,
-        out FDP2.FDR.ExtractedRoute.Segment? nextSegment)
+        out FDP2.FDR.ExtractedRoute.Segment? holdSegment)
     {
         holdSegment = null;
-        nextSegment = null;
 
         holdSegment = fdr.ParsedRoute
             .Skip(fdr.ParsedRoute.OverflownIndex)
@@ -412,17 +343,7 @@ public class Plugin
             }
         }
 
-        if (holdSegment is null)
-            return false;
-        
-        var holdIndex = fdr.ParsedRoute.IndexOf(holdSegment);
-        nextSegment = fdr.ParsedRoute
-            .Skip(holdIndex + 1)
-            .FirstOrDefault(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT);
-        if (nextSegment is null)
-            return false;
-
-        return true;
+        return holdSegment is not null;
     }
 
     void OnSelectedTrackChanged(object? sender, EventArgs e)
@@ -556,6 +477,12 @@ public class Plugin
                     {
                         UpdateHold(existingHold, exitTimeMinutes.Value);
                     }
+                    else
+                    {
+                        // Hold designator still present but exit-time segment gone; clear the
+                        // in-memory exit time so the label stays the source of truth.
+                        existingHold.HoldExitTime = null;
+                    }
 
                     // Update FDR-derived properties
                     UpdateHoldItemFromFDR(fdr, existingHold);
@@ -587,20 +514,11 @@ public class Plugin
         if (holdSegment is null)
             return;
 
-        var holdExitTime = exitTimeMinutes.HasValue
+        DateTime? holdExitTime = exitTimeMinutes.HasValue
             ? CalculateExitTime(exitTimeMinutes.Value)
-            : holdSegment.ETO.Add(TimeSpan.FromMinutes(10));
+            : null;
 
-        var holdIndex = fdr.ParsedRoute.IndexOf(holdSegment);
-        var nextSegment = fdr.ParsedRoute
-            .Skip(holdIndex + 1)
-            .FirstOrDefault(s => s.Type == FDP2.FDR.ExtractedRoute.Segment.SegmentTypes.WAYPOINT);
-
-        if (nextSegment is null)
-            return;
-
-        var holdItem = CreateHoldItem(fdr, holdSegment, nextSegment, holdExitTime);
-        UpdatePETOs(fdr, holdItem);
+        CreateHoldItem(fdr, holdSegment, holdExitTime);
     }
 
     // Find the hold-point waypoint on the route, falling back to the most recently overflown
@@ -635,66 +553,6 @@ public class Plugin
         return null;
     }
 
-    // void SyncInitiateHold(FDP2.FDR fdr, FDP2.FDR.ExtractedRoute.Segment holdExitSegment)
-    // {
-    //     try
-    //     {
-    //         var networkInstanceProperty = typeof(vatsys.Network).GetField("Instance", BindingFlags.NonPublic | BindingFlags.Static);
-    //         var networkInstance = (Network)networkInstanceProperty.GetValue(null);
-    //
-    //         // vatsys.Network.Instance.SendFlightPlanChange(fdr);
-    //         // var sendFlightPlanChangeMethod = typeof(vatsys.Network).GetMethod(
-    //         //     "SendFlightPlanChange",
-    //         //     BindingFlags.NonPublic | BindingFlags.Instance);
-    //         // sendFlightPlanChangeMethod.Invoke(networkInstance, [fdr]);
-    //
-    //     }
-    //     catch (TargetInvocationException tie)
-    //     {
-    //         // Force log even if throttled
-    //         var msg = $"Reflection call failed: {tie.InnerException?.GetType().Name} - {tie.InnerException?.Message}";
-    //         System.Diagnostics.Debug.WriteLine(msg);
-    //     }
-    //     catch (Exception ex)
-    //     {
-    //         AddError(ex);
-    //     }
-    // }
-
-    void SyncPETO(FDP2.FDR fdr, FDP2.FDR.ExtractedRoute.Segment segment)
-    {
-        try
-        {
-            var networkInstanceProperty = typeof(vatsys.Network).GetField("Instance", BindingFlags.NonPublic | BindingFlags.Static);
-            var networkInstance = (Network)networkInstanceProperty.GetValue(null);
-            
-            // vatsys.Network.Instance.SendEST(petoSegment.Parent.Parent, petoSegment, ClientQueryEstimateType.PETO);
-            var sendEstMethod = typeof(vatsys.Network).GetMethod(
-                "SendEST",
-                BindingFlags.NonPublic | BindingFlags.Instance,
-                null,
-                [
-                    typeof(FDP2.FDR),
-                    typeof(FDP2.FDR.ExtractedRoute.Segment),
-                    typeof(ClientQueryEstimateType),
-                    typeof(bool)
-                ],
-                null);
-            sendEstMethod.Invoke(networkInstance, [fdr, segment, ClientQueryEstimateType.PETO, false]);
-
-        }
-        catch (TargetInvocationException tie)
-        {
-            // Force log even if throttled
-            var msg = $"Reflection call failed: {tie.InnerException?.GetType().Name} - {tie.InnerException?.Message}";
-            System.Diagnostics.Debug.WriteLine(msg);
-        }
-        catch (Exception ex)
-        {
-            AddError(ex);
-        }
-    }
-
     void UpdateHoldItemFromFDR(FDP2.FDR fdr, HoldItem hold)
     {
         IClearedFlightLevel clearedFlightLevel = fdr.CFLLower <= 0
@@ -709,7 +567,7 @@ public class Plugin
         // ATO is only populated once the aircraft overflies the hold point, which may happen
         // after the hold item was created. Re-read it so the entry time reflects the actual
         // overflight time once available.
-        if (TryFindHoldSegments(fdr, hold, out var holdSegment, out _) && holdSegment!.ATO != default)
+        if (TryFindHoldSegment(fdr, hold, out var holdSegment) && holdSegment!.ATO != default)
             hold.HoldEntryTime = holdSegment.ATO;
     }
 
@@ -754,8 +612,7 @@ public class Plugin
     HoldItem CreateHoldItem(
         FDP2.FDR fdr,
         FDP2.FDR.ExtractedRoute.Segment holdSegment,
-        FDP2.FDR.ExtractedRoute.Segment nextSegment,
-        DateTime holdExitTime)
+        DateTime? holdExitTime)
     {
         var selectedCallsign = MMI.SelectedTrack?.GetFDR()?.Callsign;
         var isDesignated = fdr.Callsign == selectedCallsign;
@@ -767,14 +624,11 @@ public class Plugin
 
         var state = GetHoldItemState(fdr);
 
-        var timeToNextWaypoint = nextSegment.ETO - holdSegment.ETO;
-        
         var holdItem = new HoldItem(
             fdr.Callsign,
             holdSegment.Intersection.Name,
             holdSegment.ATO,
             holdExitTime,
-            timeToNextWaypoint,
             isDesignated,
             level,
             clearedFlightLevel,
@@ -803,40 +657,16 @@ public class Plugin
         var exitTime = CalculateExitTime(exitTimeMinutes);
         if (hold.HoldExitTime == exitTime)
             return;
-        
-        var fdr = FDP2.GetFDRs.FirstOrDefault(f => f.Callsign == hold.Callsign);
-        if (fdr is null)
-            return;
-        
-        hold.HoldExitTime = exitTime;
-        
-        UpdatePETOs(fdr, hold);
 
-        System.Diagnostics.Debug.WriteLine($"[HOLD DEBUG] Hold updated for {hold.Callsign}, new exit time: {exitTime}");
+        hold.HoldExitTime = exitTime;
+
+        Debug.WriteLine($"[HOLD DEBUG] Hold updated for {hold.Callsign}, new exit time: {exitTime}");
     }
 
     void CancelHold(HoldItem hold)
     {
-        var fdr = FDP2.GetFDRs.FirstOrDefault(f => f.Callsign == hold.Callsign);
-        if (fdr is null)
-        {
-            UntrackHold(hold);
-            return;
-        }
-
-        if (TryFindHoldSegments(fdr, hold, out var entrySegment, out var exitSegment))
-        {
-            // Clear PETO on both segments to remove the hold
-            FDP2.ClearPETO(fdr, entrySegment);
-            SyncPETO(fdr, entrySegment);
-            
-            FDP2.ClearPETO(fdr, exitSegment);
-            SyncPETO(fdr, entrySegment);
-            
-            System.Diagnostics.Debug.WriteLine($"[HOLD DEBUG] Hold cancelled for {hold.Callsign}");
-        }
-
         UntrackHold(hold);
+        Debug.WriteLine($"[HOLD DEBUG] Hold cancelled for {hold.Callsign}");
     }
 
     public void Receive(DesignateAircraftCommand message)
@@ -923,14 +753,13 @@ public class Plugin
             if (fdr is null)
                 return;
 
-            if (!TryFindHoldSegments(fdr, holdItem, out var entrySegment, out var exitSegment))
-                return;
+            var seedTime = holdItem.HoldExitTime ?? DateTime.UtcNow.AddMinutes(10);
 
-            // TimeMenu window = new TimeMenu(holdItem.HoldExitTime, TimeSelected: true);
+            // TimeMenu window = new TimeMenu(seedTime, TimeSelected: false);
             var window = Activator.CreateInstance(
                 Type.GetType("vatsys.TimeMenu, vatsys"),
                 [
-                    holdItem.HoldExitTime, // Selected time
+                    seedTime, // Selected time
                     false, // bool TimeSelected
                     true, // bool CancelButton
                     -90, // int TimeCountMin = -90
@@ -950,10 +779,6 @@ public class Plugin
                 {
                     holdItem.HoldExitTime = selectedTime;
 
-                    // GUI now owns the exit time, so strip it from the label data. This must be
-                    // enqueued before UpdatePETOs: the work queue is FIFO, so the strip runs ahead
-                    // of the re-parse triggered by the PETO/route change. Otherwise that re-parse
-                    // would still see the old exit time in the label and revert the selected time.
                     _workQueue.Enqueue(async () =>
                     {
                         var semaphore = _semaphoreProvider.Get(fdr.Callsign);
@@ -961,7 +786,7 @@ public class Plugin
 
                         try
                         {
-                            RemoveExitTimeFromLabel(fdr);
+                            SetExitTimeOnLabel(fdr, selectedTime.Minute);
                         }
                         finally
                         {
@@ -969,9 +794,9 @@ public class Plugin
                         }
                     });
 
-                    UpdatePETOs(fdr, holdItem);
+                    WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
 
-                    System.Diagnostics.Debug.WriteLine(
+                    Debug.WriteLine(
                         $"[HOLD DEBUG] Manual exit time update for {holdItem.Callsign}: {selectedTime}");
                 }
             }
@@ -982,6 +807,36 @@ public class Plugin
         {
             AddError(ex);
         }
+    }
+
+    public void Receive(ClearHoldExitTimeCommand message)
+    {
+        var holdItem = ActiveHolds.FirstOrDefault(h => h.Callsign == message.Callsign);
+        if (holdItem is null)
+            return;
+
+        var fdr = FDP2.GetFDRs.FirstOrDefault(f => f.Callsign == message.Callsign);
+        if (fdr is null)
+            return;
+
+        holdItem.HoldExitTime = null;
+
+        _workQueue.Enqueue(async () =>
+        {
+            var semaphore = _semaphoreProvider.Get(fdr.Callsign);
+            await semaphore.WaitAsync();
+
+            try
+            {
+                RemoveExitTimeFromLabel(fdr);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
+
+        WeakReferenceMessenger.Default.Send(new RefreshHoldsCommand());
     }
 
     /// <summary>
@@ -1017,24 +872,45 @@ public class Plugin
         }
     }
 
-    void UpdatePETOs(FDP2.FDR fdr, HoldItem holdItem)
+    /// <summary>
+    ///     Write the exit time (minutes past the hour) into the hold section of the label,
+    ///     replacing an existing exit-time segment or appending one when absent. Reuses the
+    ///     separator style already present in the hold section.
+    /// </summary>
+    void SetExitTimeOnLabel(FDP2.FDR fdr, int minutes)
     {
-        if (!TryFindHoldSegments(fdr, holdItem, out var holdSegment, out var nextSegment))
-            return;
+        var parts = fdr.LabelOpData.Split(' ');
+        for (var i = 0; i < parts.Length; i++)
+        {
+            var part = parts[i];
+            if (!part.StartsWith("H/") && !part.StartsWith("H\\"))
+                continue;
 
-        if (holdItem.HoldExitTime > DateTime.UtcNow)
-        {
-            FDP2.SetPETO(fdr, holdSegment, holdItem.HoldExitTime);
-            holdSegment.MPRArmed = false;
-            SyncPETO(fdr, holdSegment);
-        }
-        
-        var nextEto = holdItem.HoldExitTime + holdItem.TimeToNextWaypoint;
-        if (nextEto > DateTime.UtcNow)
-        {
-            FDP2.SetPETO(fdr, nextSegment, nextEto);
-            nextSegment.MPRArmed = false;
-            SyncPETO(fdr, nextSegment);
+            var separatorIndices = new List<int>();
+            for (var c = 0; c < part.Length; c++)
+            {
+                if (part[c] == '/' || part[c] == '\\')
+                    separatorIndices.Add(c);
+            }
+
+            if (separatorIndices.Count == 0)
+                return;
+
+            var minutesText = minutes.ToString();
+
+            if (separatorIndices.Count >= 2)
+            {
+                // Replace everything after the 2nd separator with the new minutes.
+                parts[i] = part.Substring(0, separatorIndices[1] + 1) + minutesText;
+            }
+            else
+            {
+                // Append using the same separator character that follows the H.
+                parts[i] = part + part[separatorIndices[0]] + minutesText;
+            }
+
+            fdr.LabelOpData = string.Join(" ", parts);
+            return;
         }
     }
 
