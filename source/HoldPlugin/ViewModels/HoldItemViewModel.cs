@@ -21,7 +21,7 @@ public partial class HoldItemViewModel : ObservableObject
     [ObservableProperty, NotifyPropertyChangedFor(nameof(DisplayClearedLevel))] IClearedFlightLevel _clearedFlightLevel = new ClearedFlightLevel(0);
     [ObservableProperty] bool _rvsmApproved = false;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(DisplayHoldEntryTime))] DateTime _holdEntryTime = DateTime.MinValue;
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(DisplayHoldExitTime))] DateTime _holdExitTime = DateTime.MinValue;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(DisplayHoldExitTime))] DateTime? _holdExitTime;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(DisplayGlobalOps))] string _globalOps = "";
     [ObservableProperty] HoldItemState _state = HoldItemState.Jurisdiction;
     [ObservableProperty] bool _isEditingGlobalOps = false;
@@ -33,8 +33,8 @@ public partial class HoldItemViewModel : ObservableObject
         IClearedFlightLevel clearedFlightLevel,
         bool rvsmApproved,
         DateTime holdEntryTime,
-        DateTime holdExitTime,
-        string globalOps, 
+        DateTime? holdExitTime,
+        string globalOps,
         HoldItemState state)
     {
         AircraftId = aircraftId;
@@ -89,7 +89,7 @@ public partial class HoldItemViewModel : ObservableObject
         }
     }
 
-    public string DisplayHoldExitTime => HoldExitTime.ToString("HHmm");
+    public string DisplayHoldExitTime => HoldExitTime?.ToString("HHmm") ?? "    ";
 
     public string DisplayGlobalOps => GlobalOps.PadRight(15);
 
@@ -115,6 +115,12 @@ public partial class HoldItemViewModel : ObservableObject
     void OpenHoldExitMenu()
     {
         WeakReferenceMessenger.Default.Send(new OpenHoldExitMenuCommand(AircraftId));
+    }
+
+    [RelayCommand]
+    void ClearHoldExitTime()
+    {
+        WeakReferenceMessenger.Default.Send(new ClearHoldExitTimeCommand(AircraftId));
     }
 
     [RelayCommand]
